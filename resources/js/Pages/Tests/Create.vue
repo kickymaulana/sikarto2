@@ -41,6 +41,7 @@ const searchError = ref('');
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchRequest = 0;
 const groups = ref<Group[]>([]);
+const selectedGroupId = ref<number | null>(null);
 const dimensionChecks = ref<DimensionCheck[]>([]);
 const today = new Date();
 const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -75,7 +76,11 @@ const mean = (points: Point[]): number | null => {
 };
 const progress = (group: Group) => group.points.filter((point) => correction(point) !== null).length;
 const allFilled = computed(() => groups.value.length > 0 && groups.value.every((group) => group.points.length > 0 && progress(group) === group.points.length));
-const avgCorrection = computed(() => allFilled.value ? mean(items.value) : null);
+const scoringPoints = computed(() => {
+    const group = groups.value.find((entry) => entry.id === selectedGroupId.value);
+    return group?.points ?? items.value;
+});
+const avgCorrection = computed(() => allFilled.value ? mean(scoringPoints.value) : null);
 const limitValid = computed(() => {
     const limit = selected.value?.acceptable_limit;
     if (!limit?.unit) return false;
@@ -99,7 +104,7 @@ const dimensionStatus = (check: DimensionCheck) => {
 };
 const hasCalibrationPoints = computed(() => items.value.length > 0);
 const measurementReady = computed(() => (hasCalibrationPoints.value ? allFilled.value && limitValid.value : dimensionChecks.value.length > 0 && ['OK', 'NG'].includes(form.status)) && dimensionsFilled.value);
-const canSubmit = computed(() => !!selected.value && !!form.test_date && form.test_date <= localToday && (isManual.value || measurementReady.value));
+const canSubmit = computed(() => !!selected.value && (groups.value.length <= 1 || !!selectedGroupId.value) && !!form.test_date && form.test_date <= localToday && (isManual.value || measurementReady.value));
 const pointErrors = (point: Point) => Object.entries(errors.value).filter(([key]) => key === `items.${point.index}` || key.startsWith(`items.${point.index}.`));
 const applyInstrument = (instrument: Instrument) => {
     selected.value = instrument;
@@ -114,6 +119,7 @@ const applyInstrument = (instrument: Instrument) => {
         open: groupIndex === 0,
         points: group.standards.map((point) => ({ standard_template_id: point.id, standard_value: point.standard_value, reading_value: '', index: index++ })),
     }));
+    selectedGroupId.value = groups.value.length === 1 ? groups.value[0].id : null;
     const specification = instrument.specification;
     dimensionChecks.value = specification ? [
         { dimension: 'length', label: 'Panjang', min: specification.length_min, max: specification.length_max },
@@ -174,6 +180,7 @@ const submit = () => {
         test_date: form.test_date,
         notes: form.notes,
         ...(form.status ? { status: form.status } : {}),
+        ...(selectedGroupId.value ? { selected_group_id: selectedGroupId.value } : {}),
         ...(!isManual.value ? {
             items: items.value.map((point) => ({ standard_template_id: point.standard_template_id, reading_value: point.reading_value.trim() })),
             dimension_checks: dimensionChecks.value.map((check) => ({ dimension: check.dimension, measured_value: check.measured_value.trim() })),
@@ -210,6 +217,15 @@ if (import.meta.env.DEV) {
             <option value="">Pilih hasil pencarian</option>
             <option v-for="option in instrumentOptions" :key="option.id" :value="option.id">{{ option.code }}</option>
         </select>
+        <div v-if="groups.length > 1" class="field-block">
+            <label class="field-label" for="scoring-group">Grup penentu rata-rata dan status</label>
+            <select id="scoring-group" v-model="selectedGroupId" class="control" :disabled="saving">
+                <option :value="null">Pilih grup penilaian</option>
+                <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }} · {{ group.reference_media }}</option>
+            </select>
+            <p class="search-state">Semua grup tetap wajib diisi. Pilihan ini hanya menentukan rata-rata dan status otomatis.</p>
+        </div>
+        <p v-else-if="groups.length === 1" class="search-state">Grup penilaian otomatis: {{ groups[0].name }} · {{ groups[0].reference_media }}</p>
     </div>
     <div v-if="Object.keys(errors).length" role="alert" class="white-card error-list">
         <p v-for="(message, key) in errors" :key="key">{{ message }}</p>

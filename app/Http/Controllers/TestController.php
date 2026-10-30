@@ -128,6 +128,7 @@ class TestController extends Controller
             'instrument_id' => 'required|integer|exists:instruments,id',
             'test_date' => 'required|date|before_or_equal:today',
             'status' => 'nullable|in:OK,NG,SPARE,NA,SERVICE',
+            'selected_group_id' => 'nullable|integer',
             'notes' => 'nullable|string',
         ]);
         $selectedStatus = $data['status'] ?? null;
@@ -150,9 +151,20 @@ class TestController extends Controller
             $avgCorrection = null;
             $testItems = [];
             $testDimensionChecks = [];
+            $selectedGroup = null;
 
             if (! $isManual) {
                 $groups = $instrument->capacity?->groups ?? collect();
+                if ($groups->isNotEmpty()) {
+                    $selectedGroup = $groups->firstWhere('id', $request->integer('selected_group_id'));
+                    if ($groups->count() === 1) {
+                        $selectedGroup = $groups->first();
+                    } elseif (! $request->has('selected_group_id')) {
+                        $selectedGroup = null;
+                    } elseif (! $selectedGroup) {
+                        throw ValidationException::withMessages(['selected_group_id' => 'Pilih grup penentu rata-rata.']);
+                    }
+                }
                 $templates = $groups->flatMap(fn ($group) => $group->standards);
                 $expectedIds = $templates->pluck('id')->sort()->values()->all();
                 $submittedIds = collect($items)->pluck('standard_template_id')->map(fn ($id) => (int) $id)->sort()->values()->all();
@@ -199,8 +211,11 @@ class TestController extends Controller
                         ];
                     }
                 }
-                if ($testItems) {
-                    $avgCorrection = round(array_sum(array_column($testItems, 'correction')) / count($testItems), 4);
+                $scoringItems = $selectedGroup
+                    ? array_values(array_filter($testItems, fn ($item) => $item['group_order'] === $groups->search(fn ($group) => $group->id === $selectedGroup->id)))
+                    : $testItems;
+                if ($scoringItems) {
+                    $avgCorrection = round(array_sum(array_column($scoringItems, 'correction')) / count($scoringItems), 4);
                     $computedStatus = $limit->isWithin($avgCorrection) ? 'OK' : 'NG';
                 }
 
@@ -246,6 +261,10 @@ class TestController extends Controller
                 'avg_correction' => $avgCorrection,
                 'min_correction_snapshot' => $limit?->min_correction,
                 'max_correction_snapshot' => $limit?->max_correction,
+                'selected_group_id' => $selectedGroup?->id,
+                'selected_group_name' => $selectedGroup?->name,
+                'selected_group_reference_media' => $selectedGroup?->reference_media,
+                'selected_group_order' => $selectedGroup ? $groups->search(fn ($group) => $group->id === $selectedGroup->id) : null,
                 'notes' => $data['notes'] ?? null,
             ]);
             $test->items()->createMany($testItems);
@@ -260,9 +279,12 @@ class TestController extends Controller
 
     public function edit(CalibrationTest $test)
     {
-        $test->load(['instrument', 'items', 'dimensionChecks']);
+        $test->load(['instrument.capacity.groups', 'items', 'dimensionChecks']);
 
-        return Inertia::render('Tests/Edit', ['test' => $test]);
+        return Inertia::render('Tests/Edit', [
+            'test' => $test,
+            'groups' => $test->instrument?->capacity?->groups ?? [],
+        ]);
     }
 
     public function update(Request $request, CalibrationTest $test)
@@ -270,6 +292,7 @@ class TestController extends Controller
         $data = $request->validate([
             'test_date' => ['required', 'date', 'before_or_equal:today'],
             'status' => ['nullable', 'in:OK,NG,SPARE,NA,SERVICE'],
+            'selected_group_id' => ['nullable', 'integer'],
             'notes' => ['nullable', 'string'],
             'items' => ['nullable', 'array'],
             'items.*.id' => ['required', 'integer', 'distinct'],
@@ -280,13 +303,18 @@ class TestController extends Controller
         ]);
 
         DB::transaction(function () use ($data, $test) {
-            $test->load(['items', 'dimensionChecks']);
+            $test->load(['instrument.capacity.groups', 'items', 'dimensionChecks']);
             $selectedStatus = $data['status'] ?? null;
             $isManual = in_array($selectedStatus, ['SPARE', 'NA', 'SERVICE'], true);
             $submittedItems = collect($data['items'] ?? [])->keyBy('id');
             $submittedDimensions = collect($data['dimension_checks'] ?? [])->keyBy('id');
             $computedStatus = null;
             $avgCorrection = null;
+            $selectedGroupId = $data['selected_group_id'] ?? $test->selected_group_id;
+            $selectedGroup = $selectedGroupId ? $test->instrument?->capacity?->groups?->firstWhere('id', (int) $selectedGroupId) : null;
+            if ($selectedGroupId !== null && ! $selectedGroup) {
+                throw ValidationException::withMessages(['selected_group_id' => 'Grup penentu rata-rata tidak valid untuk alat ini.']);
+            }
 
             if (! $isManual && $test->items->isEmpty() && ! in_array($selectedStatus, ['OK', 'NG'], true)) {
                 throw ValidationException::withMessages(['status' => 'Pilih status OK atau NG untuk pengujian tanpa titik kapasitas.']);
@@ -312,9 +340,15 @@ class TestController extends Controller
                     ]);
                     $corrections[] = $correction;
                 }
-                $avgCorrection = round(array_sum($corrections) / count($corrections), 4);
-                if ($test->min_correction_snapshot !== null && $test->max_correction_snapshot !== null) {
-                    $computedStatus = $avgCorrection >= (float) $test->min_correction_snapshot && $avgCorrection <= (float) $test->max_correction_snapshot ? 'OK' : 'NG';
+                $selectedGroupOrder = $selectedGroup ? $test->instrument->capacity->groups->search(fn ($group) => $group->id === $selectedGroup->id) : null;
+                $scoringItems = $selectedGroupOrder !== null
+                    ? $test->items->filter(fn ($item) => $item->group_order === $selectedGroupOrder)
+                    : $test->items;
+                if ($scoringItems->isNotEmpty()) {
+                    $avgCorrection = round($scoringItems->sum('correction') / $scoringItems->count(), 4);
+                    if ($test->min_correction_snapshot !== null && $test->max_correction_snapshot !== null) {
+                        $computedStatus = $avgCorrection >= (float) $test->min_correction_snapshot && $avgCorrection <= (float) $test->max_correction_snapshot ? 'OK' : 'NG';
+                    }
                 }
             }
 
@@ -339,6 +373,10 @@ class TestController extends Controller
                 'selected_status' => $selectedStatus,
                 'computed_status' => $computedStatus,
                 'avg_correction' => $avgCorrection,
+                'selected_group_id' => $selectedGroup?->id,
+                'selected_group_name' => $selectedGroup?->name,
+                'selected_group_reference_media' => $selectedGroup?->reference_media,
+                'selected_group_order' => $selectedGroup ? $test->instrument->capacity->groups->search(fn ($group) => $group->id === $selectedGroup->id) : null,
                 'notes' => $data['notes'] ?? null,
             ]);
         });

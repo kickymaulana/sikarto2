@@ -7,11 +7,13 @@ import AppLayout from '../../Layouts/AppLayout.vue';
 defineOptions({ layout: AppLayout });
 
 type Item = { id: number; standard_value: number | string; reading_value: number | string };
+type Group = { id: number; name: string; reference_media: string };
 type Dimension = { id: number; dimension: string; label: string; min_value: number | string; max_value: number | string; measured_value: number | string; unit: string };
-const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; notes: string | null; items: Item[]; dimension_checks: Dimension[] } }>();
+const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; notes: string | null; items: Item[]; dimension_checks: Dimension[] }; groups: Group[] }>();
 const form = reactive({
     test_date: props.test.test_date,
     status: props.test.selected_status ?? '',
+    selected_group_id: props.test.selected_group_id ?? (props.groups.length === 1 ? props.groups[0].id : null),
     notes: props.test.notes ?? '',
     items: props.test.items.map((item) => ({ id: item.id, standard_value: item.standard_value, reading_value: String(item.reading_value) })),
     dimension_checks: props.test.dimension_checks.map((item) => ({ id: item.id, dimension: item.dimension, label: item.label, min_value: item.min_value, max_value: item.max_value, measured_value: String(item.measured_value), unit: item.unit })),
@@ -26,6 +28,7 @@ const submit = () => {
     router.put(route('tests.update', props.test.id), {
         test_date: form.test_date,
         status: form.status || null,
+        selected_group_id: form.selected_group_id,
         notes: form.notes,
         items: isManual.value ? [] : form.items.map((item) => ({ id: item.id, reading_value: item.reading_value.trim() })),
         dimension_checks: isManual.value ? [] : form.dimension_checks.map((item) => ({ id: item.id, measured_value: item.measured_value.trim() })),
@@ -47,6 +50,12 @@ const submit = () => {
                 <option value="">Otomatis</option>
                 <option v-for="status in ['OK', 'NG', 'SPARE', 'NA', 'SERVICE']" :key="status" :value="status">{{ status }}</option>
             </select>
+            <label v-if="groups.length > 1" for="scoring-group">Grup penentu rata-rata dan status</label>
+            <select v-if="groups.length > 1" id="scoring-group" v-model="form.selected_group_id" class="control" :disabled="saving">
+                <option :value="null">Pilih grup penilaian</option>
+                <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }} · {{ group.reference_media }}</option>
+            </select>
+            <p v-else-if="groups.length === 1" class="hint">Grup penilaian: {{ groups[0].name }} · {{ groups[0].reference_media }}</p>
         </div>
         <div v-if="Object.keys(errors).length" role="alert" class="white-card error-list">
             <p v-for="(message, key) in errors" :key="key">{{ message }}</p>

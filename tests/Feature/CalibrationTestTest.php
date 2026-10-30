@@ -87,6 +87,32 @@ class CalibrationTestTest extends TestCase
         $this->assertNotNull($test->avg_correction);
     }
 
+    public function test_selected_group_controls_average_while_all_points_are_saved(): void
+    {
+        $instrument = $this->makeInstrument();
+        $secondGroup = $instrument->capacity->groups()->create(['name' => 'Second', 'reference_media' => 'Blok', 'sort_order' => 1]);
+        $secondGroup->standards()->create(['standard_value' => 100, 'sort_order' => 0]);
+        $templates = StandardTemplate::orderBy('id')->get();
+        $response = $this->actingAs($this->inspector())->post('/tests', [
+            'instrument_id' => $instrument->id,
+            'test_date' => '2026-08-01',
+            'selected_group_id' => $secondGroup->id,
+            'items' => $templates->map(fn ($template) => [
+                'standard_template_id' => $template->id,
+                'reading_value' => $template->standard_value + ($template->standard_group_id === $secondGroup->id ? 4 : 100),
+            ])->all(),
+        ]);
+
+        $response->assertSessionHasNoErrors();
+        $test = CalibrationTest::latest('id')->firstOrFail();
+        $this->assertSame('OK', $test->status);
+        $this->assertEquals(4, $test->avg_correction);
+        $this->assertCount(3, $test->items);
+        $this->assertSame($secondGroup->id, $test->selected_group_id);
+        $this->assertSame('Second', $test->selected_group_name);
+        $this->assertSame('Blok', $test->selected_group_reference_media);
+    }
+
     public function test_dimension_checks_are_snapshotted_without_changing_status(): void
     {
         $instrument = $this->makeInstrument();
@@ -242,6 +268,7 @@ class CalibrationTestTest extends TestCase
         $instrument = $this->makeInstrument();
         $group = $instrument->capacity->groups()->create(['name' => 'Second', 'reference_media' => 'Reference', 'sort_order' => 1]);
         $group->standards()->create(['standard_value' => 100, 'sort_order' => 0]);
+        $selectedGroupId = $instrument->capacity->groups()->orderBy('sort_order')->first()->id;
         $items = StandardTemplate::orderBy('id')->get()->map(fn ($s, $i) => [
             'standard_template_id' => $s->id,
             'reading_value' => (float) $s->standard_value + [1.0001, 2.0001, 12.0002][$i],
