@@ -76,10 +76,9 @@ const mean = (points: Point[]): number | null => {
 };
 const progress = (group: Group) => group.points.filter((point) => correction(point) !== null).length;
 const allFilled = computed(() => groups.value.length > 0 && groups.value.every((group) => group.points.length > 0 && progress(group) === group.points.length));
-const scoringPoints = computed(() => {
-    const group = groups.value.find((entry) => entry.id === selectedGroupId.value);
-    return group?.points ?? items.value;
-});
+const selectedGroup = computed(() => groups.value.find((group) => group.id === selectedGroupId.value) ?? null);
+const scoringPoints = computed(() => selectedGroup.value?.points ?? items.value);
+const scoringLabel = computed(() => selectedGroup.value ? `Rata-rata Koreksi ${selectedGroup.value.name} · ${selectedGroup.value.reference_media}` : 'Rata-rata Koreksi Grup Terpilih');
 const avgCorrection = computed(() => allFilled.value ? mean(scoringPoints.value) : null);
 const limitValid = computed(() => {
     const limit = selected.value?.acceptable_limit;
@@ -284,7 +283,7 @@ if (import.meta.env.DEV) {
         </div>
         <textarea v-model="form.notes" class="control min-h-24" placeholder="Catatan (opsional)" :disabled="saving" />
         <div class="result" aria-live="polite">
-            <p>Rata-rata Koreksi Global: {{ isManual ? '—' : avgCorrection ?? '—' }} {{ isManual ? '' : unit }}</p>
+            <p>{{ scoringLabel }}: {{ isManual ? '—' : avgCorrection ?? '—' }} {{ isManual ? '' : unit }}</p>
             <p>Otomatis: {{ computedStatus || (isManual ? 'Tidak dihitung' : 'Menunggu semua titik valid') }}</p>
             <p>Pilihan: {{ form.status || 'Tidak dipilih' }}</p>
             <strong>Status efektif: {{ finalStatus || '—' }}</strong>
