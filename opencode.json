@@ -1,0 +1,13 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+        "varlet": {
+            "type": "local",
+            "command": ["npx", "-y", "@fe-fast/varlet-mcp"],
+            "enabled": true,
+            "environment": {
+                "VARLET_VERSION": "latest"
+            }
+        }
+    }
+}

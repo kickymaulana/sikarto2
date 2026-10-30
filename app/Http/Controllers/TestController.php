@@ -1,0 +1,241 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\CalibrationTest;
+use App\Models\Instrument;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
+
+class TestController extends Controller
+{
+    public function index(Request $request)
+    {
+        $request->validate([
+            'per_page' => ['nullable', 'integer', 'in:20,50,100'],
+        ]);
+
+        $query = CalibrationTest::with(['instrument', 'instrument.type', 'instrument.factory', 'tester'])
+            ->orderBy('test_date', 'desc');
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+        if ($request->filled('search')) {
+            $query->whereHas('instrument', fn ($q) => $q->where('code', 'like', "%{$request->search}%"));
+        }
+
+        return Inertia::render('Tests/Index', [
+            'tests' => $query->paginate($request->integer('per_page', 20))->withQueryString(),
+            'filters' => $request->only(['status', 'search']),
+        ]);
+    }
+
+    public function create()
+    {
+        return Inertia::render('Tests/Create', [
+            'instruments' => Instrument::query()
+                ->select([
+                    'id', 'code', 'factory_id', 'department_id', 'instrument_type_id',
+                    'brand_id', 'capacity_id', 'acceptable_limit_id', 'specification_id',
+                ])
+                ->with([
+                    'capacity:id,name',
+                    'capacity.groups:id,capacity_id,name,reference_media,sort_order',
+                    'capacity.groups.standards:id,standard_group_id,standard_value,sort_order',
+                    'factory:id,name',
+                    'department:id,name',
+                    'type:id,name',
+                    'brand:id,name',
+                    'acceptableLimit:id,name,min_correction,max_correction,unit',
+                    'specification:id,name,length_min,length_max,width_min,width_max,diameter_min,diameter_max,dimension_unit',
+                ])
+                ->orderBy('code')
+                ->get()
+                ->map(fn (Instrument $instrument) => [
+                    'id' => $instrument->id,
+                    'code' => $instrument->code,
+                    'factory' => $instrument->factory ? ['name' => $instrument->factory->name] : null,
+                    'department' => $instrument->department ? ['name' => $instrument->department->name] : null,
+                    'type' => $instrument->type ? ['name' => $instrument->type->name] : null,
+                    'brand' => $instrument->brand ? ['name' => $instrument->brand->name] : null,
+                    'capacity' => $instrument->capacity ? [
+                        'name' => $instrument->capacity->name,
+                        'groups' => $instrument->capacity->groups->map(fn ($group) => [
+                            'id' => $group->id,
+                            'name' => $group->name,
+                            'reference_media' => $group->reference_media,
+                            'standards' => $group->standards->map(fn ($standard) => [
+                                'id' => $standard->id,
+                                'standard_value' => $standard->standard_value,
+                            ])->all(),
+                        ])->all(),
+                    ] : null,
+                    'acceptable_limit' => $instrument->acceptableLimit ? [
+                        'name' => $instrument->acceptableLimit->name,
+                        'min_correction' => $instrument->acceptableLimit->min_correction,
+                        'max_correction' => $instrument->acceptableLimit->max_correction,
+                        'unit' => $instrument->acceptableLimit->unit,
+                    ] : null,
+                    'specification' => $instrument->specification ? [
+                        'name' => $instrument->specification->name,
+                        'length_min' => $instrument->specification->length_min,
+                        'length_max' => $instrument->specification->length_max,
+                        'width_min' => $instrument->specification->width_min,
+                        'width_max' => $instrument->specification->width_max,
+                        'diameter_min' => $instrument->specification->diameter_min,
+                        'diameter_max' => $instrument->specification->diameter_max,
+                        'dimension_unit' => $instrument->specification->dimension_unit,
+                    ] : null,
+                ]),
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'instrument_id' => 'required|integer|exists:instruments,id',
+            'test_date' => 'required|date|before_or_equal:today',
+            'status' => 'nullable|in:OK,NG,SPARE,NA,SERVICE',
+            'notes' => 'nullable|string',
+        ]);
+        $selectedStatus = $data['status'] ?? null;
+        $isManual = in_array($selectedStatus, ['SPARE', 'NA', 'SERVICE'], true);
+        $items = $isManual ? [] : $request->validate([
+            'items' => 'nullable|array',
+            'items.*.standard_template_id' => 'required|integer|distinct',
+            'items.*.reading_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
+        ])['items'] ?? [];
+        $dimensionChecks = $isManual ? [] : $request->validate([
+            'dimension_checks' => 'nullable|array',
+            'dimension_checks.*.dimension' => 'required|string|distinct|in:length,width,diameter',
+            'dimension_checks.*.measured_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
+        ])['dimension_checks'] ?? [];
+
+        $test = DB::transaction(function () use ($request, $data, $selectedStatus, $isManual, $items, $dimensionChecks) {
+            $instrument = Instrument::with(['acceptableLimit', 'capacity.groups.standards', 'specification'])->lockForUpdate()->findOrFail($data['instrument_id']);
+            $limit = $instrument->acceptableLimit;
+            $computedStatus = null;
+            $avgCorrection = null;
+            $testItems = [];
+            $testDimensionChecks = [];
+
+            if (! $isManual) {
+                $groups = $instrument->capacity?->groups ?? collect();
+                $templates = $groups->flatMap(fn ($group) => $group->standards);
+                $expectedIds = $templates->pluck('id')->sort()->values()->all();
+                $submittedIds = collect($items)->pluck('standard_template_id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+                if ($expectedIds !== $submittedIds || $groups->contains(fn ($group) => $group->standards->isEmpty())) {
+                    throw ValidationException::withMessages(['items' => 'Isi semua titik uji kapasitas tepat satu kali tanpa titik tambahan.']);
+                }
+                if (empty($expectedIds) && empty($dimensionChecks)) {
+                    throw ValidationException::withMessages(['items' => 'Alat harus memiliki titik uji kapasitas atau pemeriksaan ukuran.']);
+                }
+                if (empty($expectedIds) && ! in_array($selectedStatus, ['OK', 'NG'], true)) {
+                    throw ValidationException::withMessages(['status' => 'Pilih status OK atau NG untuk pengujian ukuran.']);
+                }
+                if ($expectedIds && ! $limit) {
+                    throw ValidationException::withMessages(['instrument_id' => 'Batas toleransi alat tidak tersedia.']);
+                }
+                if ($expectedIds) {
+                    Validator::make($limit->toArray(), [
+                        'min_correction' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
+                        'max_correction' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999|gte:min_correction',
+                        'unit' => 'required|string|max:20',
+                    ])->validate();
+                }
+                $readings = collect($items)->keyBy('standard_template_id');
+                foreach ($groups as $groupOrder => $group) {
+                    foreach ($group->standards as $pointOrder => $standard) {
+                        Validator::make(['standard_value' => $standard->standard_value], [
+                            'standard_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
+                        ])->validate();
+                        $reading = $readings[$standard->id]['reading_value'];
+                        $correction = round((float) $reading - (float) $standard->standard_value, 4);
+                        if (! is_finite($correction) || abs($correction) > 99999999.9999) {
+                            throw ValidationException::withMessages(['items' => 'Koreksi melampaui rentang penyimpanan.']);
+                        }
+                        $testItems[] = [
+                            'standard_value' => $standard->standard_value,
+                            'reading_value' => $reading,
+                            'correction' => $correction,
+                            'is_within_limit' => $limit->isWithin($correction),
+                            'group_order' => $groupOrder,
+                            'group_name' => $group->name,
+                            'reference_media' => $group->reference_media,
+                            'unit' => $limit->unit,
+                            'point_order' => $pointOrder,
+                        ];
+                    }
+                }
+                if ($testItems) {
+                    $avgCorrection = round(array_sum(array_column($testItems, 'correction')) / count($testItems), 4);
+                    $computedStatus = $limit->isWithin($avgCorrection) ? 'OK' : 'NG';
+                }
+
+                $dimensions = collect([
+                    'length' => ['label' => 'Panjang', 'min' => $instrument->specification?->length_min, 'max' => $instrument->specification?->length_max],
+                    'width' => ['label' => 'Lebar', 'min' => $instrument->specification?->width_min, 'max' => $instrument->specification?->width_max],
+                    'diameter' => ['label' => 'Diameter', 'min' => $instrument->specification?->diameter_min, 'max' => $instrument->specification?->diameter_max],
+                ])->filter(fn ($dimension) => $dimension['min'] !== null && $dimension['max'] !== null);
+                $expectedDimensions = $dimensions->keys()->sort()->values()->all();
+                $submittedDimensions = collect($dimensionChecks)->pluck('dimension')->sort()->values()->all();
+                if ($expectedDimensions !== $submittedDimensions) {
+                    throw ValidationException::withMessages(['dimension_checks' => 'Isi semua ukuran spesifikasi tepat satu kali tanpa ukuran tambahan.']);
+                }
+                if ($dimensions->isNotEmpty() && empty($instrument->specification?->dimension_unit)) {
+                    throw ValidationException::withMessages(['instrument_id' => 'Satuan ukuran spesifikasi tidak tersedia.']);
+                }
+                $measurements = collect($dimensionChecks)->keyBy('dimension');
+                foreach ($dimensions as $dimensionKey => $dimension) {
+                    $key = $dimensions->keys()->search($dimensionKey);
+                    $measured = $measurements[$dimensionKey]['measured_value'];
+                    $testDimensionChecks[] = [
+                        'dimension' => $dimensionKey,
+                        'label' => $dimension['label'],
+                        'min_value' => $dimension['min'],
+                        'max_value' => $dimension['max'],
+                        'measured_value' => $measured,
+                        'unit' => $instrument->specification->dimension_unit,
+                        'is_within_range' => (float) $measured >= (float) $dimension['min'] && (float) $measured <= (float) $dimension['max'],
+                        'sort_order' => $key,
+                    ];
+                }
+            }
+
+            $testDate = Carbon::parse($data['test_date']);
+            $test = CalibrationTest::create([
+                'instrument_id' => $instrument->id,
+                'test_date' => $testDate->toDateString(),
+                'next_test_date' => $testDate->addMonth()->toDateString(),
+                'tester_id' => $request->user()->id,
+                'status' => $selectedStatus ?? $computedStatus,
+                'selected_status' => $selectedStatus,
+                'computed_status' => $computedStatus,
+                'avg_correction' => $avgCorrection,
+                'min_correction_snapshot' => $limit?->min_correction,
+                'max_correction_snapshot' => $limit?->max_correction,
+                'notes' => $data['notes'] ?? null,
+            ]);
+            $test->items()->createMany($testItems);
+            $test->dimensionChecks()->createMany($testDimensionChecks);
+
+            return $test;
+        });
+
+        return redirect()->route('tests.show', $test)
+            ->with('flash', ['success' => "Pengujian tersimpan. Status: {$test->status}"]);
+    }
+
+    public function show(CalibrationTest $test)
+    {
+        $test->load(['instrument', 'instrument.type', 'instrument.factory', 'instrument.department',
+            'instrument.brand', 'instrument.capacity', 'instrument.acceptableLimit', 'instrument.specification', 'tester', 'items', 'dimensionChecks']);
+
+        return Inertia::render('Tests/Show', ['test' => $test]);
+    }
+}

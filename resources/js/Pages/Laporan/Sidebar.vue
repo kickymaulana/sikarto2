@@ -1,0 +1,9 @@
+<script setup lang="ts">
+import { router } from '@inertiajs/vue3';
+import { route } from 'ziggy-js';
+import { BarChart3, FileText, Menu, X } from '@lucide/vue';
+import { ref } from 'vue';
+const props=defineProps<{active:string}>(); const show=ref(false); const go=(value:string)=>{show.value=false;if(value==='index')router.get(route('laporan.index'));if(value==='monthly')router.get(route('laporan.matrix'));if(value==='internal')router.get(route('laporan.internal-kalibrasi'))};
+</script>
+<template><button class="menu-button" @click="show=true"><Menu :size="20" /></button><div v-if="show" class="fixed inset-0 z-50 bg-slate-900/30" @click.self="show=false"><aside class="h-full w-72 bg-white shadow-xl"><div class="flex items-center justify-between bg-orange-500 p-5 text-white"><div><div class="font-extrabold">SI KARTO</div><div class="text-xs text-orange-100">Laporan</div></div><button @click="show=false"><X :size="20" /></button></div><nav class="space-y-1 p-3"><button class="nav-item" :class="{active:props.active==='index'}" @click="go('index')"><FileText :size="17" /> Ringkasan</button><button class="nav-item" :class="{active:props.active==='monthly'}" @click="go('monthly')"><BarChart3 :size="17" /> Matriks Uji</button><button class="nav-item" :class="{active:props.active==='internal'}" @click="go('internal')"><FileText :size="17" /> Internal Kalibrasi Record</button></nav></aside></div></template>
+<style scoped>.menu-button{display:inline-flex;height:2.25rem;width:2.25rem;align-items:center;justify-content:center;border-radius:.625rem;color:#64748b}.nav-item{display:flex;width:100%;align-items:center;gap:.65rem;border-radius:.625rem;padding:.7rem;color:#64748b;text-align:left;font-size:.875rem}.nav-item.active,.nav-item:hover{background:#fff7ed;color:#c2410c;font-weight:700}</style>
