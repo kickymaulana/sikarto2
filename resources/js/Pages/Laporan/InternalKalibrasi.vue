@@ -8,6 +8,7 @@ defineOptions({ layout: AppLayout });
 
 const props = defineProps<{
     year: number;
+    month: number | null;
     factoryId: number | null;
     typeId: number | null;
     factories: Array<{ id: number; name: string }>;
@@ -28,6 +29,7 @@ const props = defineProps<{
 }>();
 
 const years = Array.from({ length: 11 }, (_, index) => ({ label: String(2020 + index), value: String(2020 + index) }));
+const months = [{ label: 'Semua Bulan', value: '' }, ...['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'].map((label, index) => ({ label, value: String(index + 1) }))];
 const factoryOptions = [{ label: 'Semua Pabrik', value: '' }, ...props.factories.map((factory) => ({ label: factory.name, value: String(factory.id) }))];
 const typeOptions = [{ label: 'Semua Jenis', value: '' }, ...props.types.map((type) => ({ label: type.name, value: String(type.id) }))];
 
@@ -47,10 +49,11 @@ const statusType = (status: string) => status === 'OK' ? 'success' : status === 
         </div>
 
         <div class="toolbar">
-            <select class="control" :value="String(year)" @change="apply({ year: ($event.target as HTMLSelectElement).value, factory_id: factoryId?.toString(), type_id: typeId?.toString() })"><option v-for="option in years" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-            <select class="control" :value="String(factoryId ?? '')" @change="apply({ year: String(year), factory_id: ($event.target as HTMLSelectElement).value || undefined, type_id: typeId?.toString() })"><option v-for="option in factoryOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-            <select class="control" :value="String(typeId ?? '')" @change="apply({ year: String(year), factory_id: factoryId?.toString(), type_id: ($event.target as HTMLSelectElement).value || undefined })"><option v-for="option in typeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-            <a class="export-btn" :href="route('laporan.internal-kalibrasi.export', { year, factory_id: factoryId ?? undefined, type_id: typeId ?? undefined })">
+            <select class="control" :value="String(year)" @change="apply({ year: ($event.target as HTMLSelectElement).value, month: month?.toString(), factory_id: factoryId?.toString(), type_id: typeId?.toString() })"><option v-for="option in years" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+            <select class="control" :value="String(month ?? '')" @change="apply({ year: String(year), month: ($event.target as HTMLSelectElement).value || undefined, factory_id: factoryId?.toString(), type_id: typeId?.toString() })"><option v-for="option in months" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+            <select class="control" :value="String(factoryId ?? '')" @change="apply({ year: String(year), month: month?.toString(), factory_id: ($event.target as HTMLSelectElement).value || undefined, type_id: typeId?.toString() })"><option v-for="option in factoryOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+            <select class="control" :value="String(typeId ?? '')" @change="apply({ year: String(year), month: month?.toString(), factory_id: factoryId?.toString(), type_id: ($event.target as HTMLSelectElement).value || undefined })"><option v-for="option in typeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+            <a class="export-btn" :href="route('laporan.internal-kalibrasi.export', { year, month: month ?? undefined, factory_id: factoryId ?? undefined, type_id: typeId ?? undefined })">
                 <span class="export-button">Export Excel</span>
             </a>
         </div>

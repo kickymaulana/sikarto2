@@ -14,12 +14,14 @@ class ReportController extends Controller
 {
     public function internalKalibrasi(Request $request)
     {
-        $tests = $this->internalKalibrasiRows($request);
+        $filters = $this->internalKalibrasiFilters($request);
+        $tests = $this->internalKalibrasiRows($filters);
 
         return Inertia::render('Laporan/InternalKalibrasi', [
-            'year' => (int) ($request->filled('year') ? $request->year : now()->year),
-            'factoryId' => $request->filled('factory_id') ? (int) $request->factory_id : null,
-            'typeId' => $request->filled('type_id') ? (int) $request->type_id : null,
+            'year' => $filters['year'],
+            'month' => $filters['month'],
+            'factoryId' => $filters['factory_id'],
+            'typeId' => $filters['type_id'],
             'factories' => Factory::orderBy('name')->get(['id', 'name']),
             'types' => InstrumentType::orderBy('name')->get(['id', 'name']),
             'tests' => $tests,
@@ -28,13 +30,30 @@ class ReportController extends Controller
 
     public function internalKalibrasiExport(Request $request)
     {
-        $year = (int) ($request->filled('year') ? $request->year : now()->year);
-        $fileName = 'Internal_Kalibrasi_Record_'.$year.'.xlsx';
+        $filters = $this->internalKalibrasiFilters($request);
+        $fileName = 'Internal_Kalibrasi_Record_'.$filters['year'].($filters['month'] ? '_'.str_pad((string) $filters['month'], 2, '0', STR_PAD_LEFT) : '').'.xlsx';
 
-        return Excel::download(new InternalKalibrasiExport($this->internalKalibrasiRows($request)->all()), $fileName);
+        return Excel::download(new InternalKalibrasiExport($this->internalKalibrasiRows($filters)->all()), $fileName);
     }
 
-    private function internalKalibrasiRows(Request $request)
+    private function internalKalibrasiFilters(Request $request): array
+    {
+        $validated = $request->validate([
+            'year' => ['nullable', 'integer', 'between:2000,2100'],
+            'month' => ['nullable', 'integer', 'between:1,12'],
+            'factory_id' => ['nullable', 'integer', 'exists:factories,id'],
+            'type_id' => ['nullable', 'integer', 'exists:instrument_types,id'],
+        ]);
+
+        return [
+            'year' => isset($validated['year']) ? (int) $validated['year'] : now()->year,
+            'month' => isset($validated['month']) ? (int) $validated['month'] : null,
+            'factory_id' => isset($validated['factory_id']) ? (int) $validated['factory_id'] : null,
+            'type_id' => isset($validated['type_id']) ? (int) $validated['type_id'] : null,
+        ];
+    }
+
+    private function internalKalibrasiRows(array $filters)
     {
         $query = CalibrationTest::with([
             'instrument.department',
@@ -42,15 +61,19 @@ class ReportController extends Controller
             'instrument.capacity',
             'instrument.acceptableLimit',
             'instrument.type',
-        ])->whereYear('test_date', $request->filled('year') ? (int) $request->year : now()->year)
+        ])->whereYear('test_date', $filters['year'])
             ->orderByDesc('test_date')
             ->orderByDesc('id');
 
-        if ($request->filled('factory_id')) {
-            $query->whereHas('instrument', fn ($q) => $q->where('factory_id', (int) $request->factory_id));
+        if ($filters['month']) {
+            $query->whereMonth('test_date', $filters['month']);
         }
-        if ($request->filled('type_id')) {
-            $query->whereHas('instrument', fn ($q) => $q->where('instrument_type_id', (int) $request->type_id));
+
+        if ($filters['factory_id']) {
+            $query->whereHas('instrument', fn ($q) => $q->where('factory_id', $filters['factory_id']));
+        }
+        if ($filters['type_id']) {
+            $query->whereHas('instrument', fn ($q) => $q->where('instrument_type_id', $filters['type_id']));
         }
 
         return $query->get()->map(fn (CalibrationTest $test) => [
@@ -75,9 +98,21 @@ class ReportController extends Controller
             return null;
         }
 
+        $min = (float) $test->min_correction_snapshot;
+        $max = (float) $test->max_correction_snapshot;
         $unit = $test->instrument?->acceptableLimit?->unit;
+        $suffix = $unit ? ' '.strtoupper($unit) : '';
 
-        return $test->min_correction_snapshot.' s/d '.$test->max_correction_snapshot.($unit ? ' '.$unit : '');
+        if (abs($min) === abs($max)) {
+            return '± '.$this->formatLimitNumber(abs($max)).$suffix;
+        }
+
+        return $this->formatLimitNumber($min).' s/d '.$this->formatLimitNumber($max).$suffix;
+    }
+
+    private function formatLimitNumber(float $value): string
+    {
+        return rtrim(rtrim(number_format($value, 4, ',', ''), '0'), ',');
     }
 
     public function index(Request $request)
