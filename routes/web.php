@@ -68,6 +68,10 @@ Route::middleware('auth')->group(function () {
         ->middleware('permission:test.read');
     Route::get('/tests/create', [TestController::class, 'create'])->name('tests.create')
         ->middleware('permission:test.create');
+    Route::get('/tests/instruments/search', [TestController::class, 'searchInstruments'])->name('tests.instruments.search')
+        ->middleware('permission:test.create');
+    Route::get('/tests/instruments/{instrument}', [TestController::class, 'instrument'])->name('tests.instruments.show')
+        ->middleware('permission:test.create');
     Route::post('/tests', [TestController::class, 'store'])->name('tests.store')
         ->middleware('permission:test.create');
     Route::get('/tests/{test}', [TestController::class, 'show'])->name('tests.show')

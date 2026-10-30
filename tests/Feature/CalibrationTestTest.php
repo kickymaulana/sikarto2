@@ -385,17 +385,17 @@ class CalibrationTestTest extends TestCase
         $this->actingAs($this->inspector());
         $this->get('/tests/create')->assertInertia(fn (AssertableInertia $page) => $page
             ->component('Tests/Create')
-            ->has('instruments.0.capacity.groups', 1)
-            ->where('instruments.0.capacity.groups.0.name', 'Penimbangan')
-            ->where('instruments.0.capacity.groups.0.reference_media', 'Anak Timbangan')
-            ->has('instruments.0.capacity.groups.0.standards', 2)
-            ->has('instruments.0.capacity.groups.0.standards.0.id')
-            ->has('instruments.0.capacity.groups.0.standards.0.standard_value')
-            ->where('instruments.0.acceptable_limit.unit', 'gr')
-            ->missing('instruments.0.created_at')
-            ->missing('instruments.0.updated_at')
-            ->missing('instruments.0.factory.created_at')
-            ->missing('instruments.0.capacity.groups.0.standards.0.created_at'));
+            ->where('instruments', []));
+        $this->get('/tests/instruments/search?search=W.FL')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $instrument->id)
+            ->assertJsonPath('data.0.code', 'W.FL.5');
+        $this->get("/tests/instruments/{$instrument->id}")
+            ->assertOk()
+            ->assertJsonPath('data.capacity.groups.0.name', 'Penimbangan')
+            ->assertJsonPath('data.capacity.groups.0.reference_media', 'Anak Timbangan')
+            ->assertJsonCount(2, 'data.capacity.groups.0.standards')
+            ->assertJsonPath('data.acceptable_limit.unit', 'gr');
         $this->get("/masters/capacities/{$instrument->capacity_id}/edit")->assertInertia(fn (AssertableInertia $page) => $page
             ->component('Masters/Form')->has('item.groups.0.id')->has('item.groups.0.standards.0.id'));
         $items = StandardTemplate::get()->map(fn ($s) => ['standard_template_id' => $s->id, 'reading_value' => $s->standard_value])->all();

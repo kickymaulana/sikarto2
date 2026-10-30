@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { router } from '@inertiajs/vue3';
 import { route } from 'ziggy-js';
 
@@ -31,8 +31,15 @@ type Instrument = {
 type Point = { standard_template_id: number; standard_value: Decimal; reading_value: string; index: number };
 type Group = { id: number; name: string; reference_media: string; open: boolean; points: Point[] };
 type DimensionCheck = { dimension: string; label: string; min: Decimal; max: Decimal; measured_value: string };
+type InstrumentOption = { id: number; code: string };
 const props = defineProps<{ instruments: Instrument[] }>();
 const selected = ref<Instrument | null>(null);
+const search = ref('');
+const searchResults = ref<InstrumentOption[]>(props.instruments.map(({ id, code }) => ({ id, code })));
+const searching = ref(false);
+const searchError = ref('');
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+let searchRequest = 0;
 const groups = ref<Group[]>([]);
 const dimensionChecks = ref<DimensionCheck[]>([]);
 const today = new Date();
@@ -40,7 +47,7 @@ const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padSta
 const form = reactive({ instrument_id: '' as number | string, test_date: localToday, status: '', notes: '' });
 const saving = ref(false);
 const errors = ref<Record<string, string>>({});
-const instrumentOptions = props.instruments.map((instrument) => ({ label: instrument.code, value: instrument.id }));
+const instrumentOptions = computed(() => searchResults.value);
 const items = computed(() => groups.value.flatMap((group) => group.points));
 const isManual = computed(() => ['SPARE', 'NA', 'SERVICE'].includes(form.status));
 const unit = computed(() => selected.value?.acceptable_limit?.unit ?? '');
@@ -94,26 +101,70 @@ const hasCalibrationPoints = computed(() => items.value.length > 0);
 const measurementReady = computed(() => (hasCalibrationPoints.value ? allFilled.value && limitValid.value : dimensionChecks.value.length > 0 && ['OK', 'NG'].includes(form.status)) && dimensionsFilled.value);
 const canSubmit = computed(() => !!selected.value && !!form.test_date && form.test_date <= localToday && (isManual.value || measurementReady.value));
 const pointErrors = (point: Point) => Object.entries(errors.value).filter(([key]) => key === `items.${point.index}` || key.startsWith(`items.${point.index}.`));
-const selectInstrument = (id: unknown) => {
-    selected.value = props.instruments.find((instrument) => instrument.id === Number(id)) ?? null;
-    form.instrument_id = selected.value?.id ?? '';
+const applyInstrument = (instrument: Instrument) => {
+    selected.value = instrument;
+    form.instrument_id = instrument.id;
     form.status = '';
     errors.value = {};
     let index = 0;
-    groups.value = (selected.value?.capacity?.groups ?? []).map((group, groupIndex) => ({
+    groups.value = (instrument.capacity?.groups ?? []).map((group, groupIndex) => ({
         id: group.id,
         name: group.name,
         reference_media: group.reference_media,
         open: groupIndex === 0,
         points: group.standards.map((point) => ({ standard_template_id: point.id, standard_value: point.standard_value, reading_value: '', index: index++ })),
     }));
-    const specification = selected.value?.specification;
+    const specification = instrument.specification;
     dimensionChecks.value = specification ? [
         { dimension: 'length', label: 'Panjang', min: specification.length_min, max: specification.length_max },
         { dimension: 'width', label: 'Lebar', min: specification.width_min, max: specification.width_max },
         { dimension: 'diameter', label: 'Diameter', min: specification.diameter_min, max: specification.diameter_max },
     ].filter((check) => check.min !== null && check.max !== null).map((check) => ({ ...check, min: check.min!, max: check.max!, measured_value: '' })) : [];
 };
+const selectInstrument = async (id: unknown) => {
+    const option = searchResults.value.find((item) => item.id === Number(id));
+    if (!option) return;
+    searching.value = true;
+    searchError.value = '';
+    try {
+        const response = await fetch(route('tests.instruments.show', option.id), { headers: { Accept: 'application/json' } });
+        if (!response.ok) throw new Error('Gagal memuat alat ukur.');
+        const payload = await response.json() as { data: Instrument };
+        applyInstrument(payload.data);
+        search.value = payload.data.code;
+        searchResults.value = [option];
+    } catch (error) {
+        searchError.value = error instanceof Error ? error.message : 'Gagal memuat alat ukur.';
+    } finally {
+        searching.value = false;
+    }
+};
+const searchInstruments = async (value: string) => {
+    const query = value.trim();
+    if (query.length < 2) {
+        searchResults.value = [];
+        searchError.value = '';
+        return;
+    }
+    const requestId = ++searchRequest;
+    searching.value = true;
+    searchError.value = '';
+    try {
+        const response = await fetch(`${route('tests.instruments.search')}?search=${encodeURIComponent(query)}`, { headers: { Accept: 'application/json' } });
+        if (!response.ok) throw new Error('Gagal mencari alat ukur.');
+        const payload = await response.json() as { data: InstrumentOption[] };
+        if (requestId === searchRequest) searchResults.value = payload.data;
+    } catch (error) {
+        if (requestId === searchRequest) searchError.value = error instanceof Error ? error.message : 'Gagal mencari alat ukur.';
+    } finally {
+        if (requestId === searchRequest) searching.value = false;
+    }
+};
+watch(search, (value) => {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { void searchInstruments(value); }, 300);
+});
+onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 const submit = () => {
     if (!canSubmit.value || saving.value) return;
     saving.value = true;
@@ -150,7 +201,15 @@ if (import.meta.env.DEV) {
 <template>
     <div class="white-card">
         <h3 class="card-title">1. Pilih Alat Ukur</h3>
-        <select v-model="form.instrument_id" class="control" :disabled="saving" @change="selectInstrument(form.instrument_id)"><option value="">Kode Alat</option><option v-for="option in instrumentOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+        <input v-model="search" class="control" type="search" placeholder="Ketik minimal 2 karakter kode, jenis, atau merk" :disabled="saving || searching" autocomplete="off" />
+        <p v-if="searching" class="search-state">Mencari...</p>
+        <p v-else-if="search.trim().length < 2" class="search-state">Ketik minimal 2 karakter untuk mencari alat ukur.</p>
+        <p v-else-if="!instrumentOptions.length && !searchError" class="search-state">Alat ukur tidak ditemukan.</p>
+        <p v-if="searchError" class="error-list">{{ searchError }}</p>
+        <select v-model="form.instrument_id" class="control" :disabled="saving || searching || !instrumentOptions.length" @change="selectInstrument(form.instrument_id)">
+            <option value="">Pilih hasil pencarian</option>
+            <option v-for="option in instrumentOptions" :key="option.id" :value="option.id">{{ option.code }}</option>
+        </select>
     </div>
     <div v-if="Object.keys(errors).length" role="alert" class="white-card error-list">
         <p v-for="(message, key) in errors" :key="key">{{ message }}</p>
