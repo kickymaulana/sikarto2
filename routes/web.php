@@ -74,6 +74,12 @@ Route::middleware('auth')->group(function () {
         ->middleware('permission:test.create');
     Route::post('/tests', [TestController::class, 'store'])->name('tests.store')
         ->middleware('permission:test.create');
+    Route::get('/tests/{test}/edit', [TestController::class, 'edit'])->name('tests.edit')
+        ->middleware('permission:test.update');
+    Route::put('/tests/{test}', [TestController::class, 'update'])->name('tests.update')
+        ->middleware('permission:test.update');
+    Route::delete('/tests/{test}', [TestController::class, 'destroy'])->name('tests.destroy')
+        ->middleware('permission:test.delete');
     Route::get('/tests/{test}', [TestController::class, 'show'])->name('tests.show')
         ->middleware('permission:test.read');
 

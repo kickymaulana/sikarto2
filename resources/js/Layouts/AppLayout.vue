@@ -55,6 +55,7 @@ const pageTitle = computed(() => {
     if (current === 'tests.index') return 'Riwayat Pengujian';
     if (current === 'tests.create') return 'Entry Pengujian';
     if (current === 'tests.show') return 'Detail Pengujian';
+    if (current === 'tests.edit') return 'Edit Pengujian';
     if (current === 'reports.index') return 'Laporan & Rekapitulasi';
     if (current.startsWith('laporan.')) return current === 'laporan.matrix' ? 'Matriks Uji Bulanan' : 'Laporan';
     if (current === 'users.index') return 'Kelola Pengguna';

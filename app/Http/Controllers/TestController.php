@@ -258,6 +258,101 @@ class TestController extends Controller
             ->with('flash', ['success' => "Pengujian tersimpan. Status: {$test->status}"]);
     }
 
+    public function edit(CalibrationTest $test)
+    {
+        $test->load(['instrument', 'items', 'dimensionChecks']);
+
+        return Inertia::render('Tests/Edit', ['test' => $test]);
+    }
+
+    public function update(Request $request, CalibrationTest $test)
+    {
+        $data = $request->validate([
+            'test_date' => ['required', 'date', 'before_or_equal:today'],
+            'status' => ['nullable', 'in:OK,NG,SPARE,NA,SERVICE'],
+            'notes' => ['nullable', 'string'],
+            'items' => ['nullable', 'array'],
+            'items.*.id' => ['required', 'integer', 'distinct'],
+            'items.*.reading_value' => ['required', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
+            'dimension_checks' => ['nullable', 'array'],
+            'dimension_checks.*.id' => ['required', 'integer', 'distinct'],
+            'dimension_checks.*.measured_value' => ['required', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
+        ]);
+
+        DB::transaction(function () use ($data, $test) {
+            $test->load(['items', 'dimensionChecks']);
+            $selectedStatus = $data['status'] ?? null;
+            $isManual = in_array($selectedStatus, ['SPARE', 'NA', 'SERVICE'], true);
+            $submittedItems = collect($data['items'] ?? [])->keyBy('id');
+            $submittedDimensions = collect($data['dimension_checks'] ?? [])->keyBy('id');
+            $computedStatus = null;
+            $avgCorrection = null;
+
+            if (! $isManual && $test->items->isEmpty() && ! in_array($selectedStatus, ['OK', 'NG'], true)) {
+                throw ValidationException::withMessages(['status' => 'Pilih status OK atau NG untuk pengujian tanpa titik kapasitas.']);
+            }
+
+            if (! $isManual && $test->items->isNotEmpty()) {
+                if ($submittedItems->keys()->sort()->values()->all() !== $test->items->pluck('id')->sort()->values()->all()) {
+                    throw ValidationException::withMessages(['items' => 'Data titik uji tidak lengkap atau tidak valid.']);
+                }
+                $corrections = [];
+                foreach ($test->items as $item) {
+                    $reading = $submittedItems[$item->id]['reading_value'];
+                    $correction = round((float) $reading - (float) $item->standard_value, 4);
+                    if (! is_finite($correction) || abs($correction) > 99999999.9999) {
+                        throw ValidationException::withMessages(['items' => 'Koreksi melampaui rentang penyimpanan.']);
+                    }
+                    $item->update([
+                        'reading_value' => $reading,
+                        'correction' => $correction,
+                        'is_within_limit' => $test->min_correction_snapshot !== null && $test->max_correction_snapshot !== null
+                            ? $correction >= (float) $test->min_correction_snapshot && $correction <= (float) $test->max_correction_snapshot
+                            : null,
+                    ]);
+                    $corrections[] = $correction;
+                }
+                $avgCorrection = round(array_sum($corrections) / count($corrections), 4);
+                if ($test->min_correction_snapshot !== null && $test->max_correction_snapshot !== null) {
+                    $computedStatus = $avgCorrection >= (float) $test->min_correction_snapshot && $avgCorrection <= (float) $test->max_correction_snapshot ? 'OK' : 'NG';
+                }
+            }
+
+            if (! $isManual && $test->dimensionChecks->isNotEmpty()) {
+                if ($submittedDimensions->keys()->sort()->values()->all() !== $test->dimensionChecks->pluck('id')->sort()->values()->all()) {
+                    throw ValidationException::withMessages(['dimension_checks' => 'Data pemeriksaan ukuran tidak lengkap atau tidak valid.']);
+                }
+                foreach ($test->dimensionChecks as $dimension) {
+                    $measured = $submittedDimensions[$dimension->id]['measured_value'];
+                    $dimension->update([
+                        'measured_value' => $measured,
+                        'is_within_range' => (float) $measured >= (float) $dimension->min_value && (float) $measured <= (float) $dimension->max_value,
+                    ]);
+                }
+            }
+
+            $testDate = Carbon::parse($data['test_date']);
+            $test->update([
+                'test_date' => $testDate->toDateString(),
+                'next_test_date' => $testDate->copy()->addMonth()->toDateString(),
+                'status' => $selectedStatus ?? $computedStatus ?? ($isManual ? $selectedStatus : $test->status),
+                'selected_status' => $selectedStatus,
+                'computed_status' => $computedStatus,
+                'avg_correction' => $avgCorrection,
+                'notes' => $data['notes'] ?? null,
+            ]);
+        });
+
+        return redirect()->route('tests.show', $test)->with('flash', ['success' => 'Pengujian berhasil diperbarui.']);
+    }
+
+    public function destroy(CalibrationTest $test)
+    {
+        DB::transaction(fn () => $test->delete());
+
+        return redirect()->route('tests.index')->with('flash', ['success' => 'Pengujian berhasil dihapus.']);
+    }
+
     public function show(CalibrationTest $test)
     {
         $test->load(['instrument', 'instrument.type', 'instrument.factory', 'instrument.department',

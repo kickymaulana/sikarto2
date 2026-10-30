@@ -430,6 +430,68 @@ class CalibrationTestTest extends TestCase
         $this->assertSame('Penimbangan', $test->items->first()->group_name);
     }
 
+    public function test_inspector_can_edit_and_delete_calibration_test(): void
+    {
+        $instrument = $this->makeInstrument();
+        $inspector = $this->inspector();
+        $this->actingAs($inspector)->post('/tests', [
+            'instrument_id' => $instrument->id,
+            'test_date' => '2026-08-01',
+            'items' => [
+                ['standard_template_id' => StandardTemplate::where('standard_value', 500)->value('id'), 'reading_value' => 502],
+                ['standard_template_id' => StandardTemplate::where('standard_value', 700)->value('id'), 'reading_value' => 704],
+            ],
+        ])->assertSessionHasNoErrors();
+        $test = CalibrationTest::firstOrFail();
+        $item = $test->items()->firstOrFail();
+
+        $this->actingAs($inspector)->put("/tests/{$test->id}", [
+            'test_date' => '2026-08-02',
+            'status' => 'NG',
+            'notes' => 'Diperbarui',
+            'items' => $test->items->map(fn ($row) => [
+                'id' => $row->id,
+                'reading_value' => $row->id === $item->id ? '510' : $row->reading_value,
+            ])->all(),
+            'dimension_checks' => [],
+        ])->assertRedirect(route('tests.show', $test));
+        $test->refresh();
+        $item->refresh();
+        $this->assertSame('2026-08-02', $test->test_date->toDateString());
+        $this->assertSame('2026-09-02', $test->next_test_date->toDateString());
+        $this->assertSame('NG', $test->status);
+        $this->assertSame('Diperbarui', $test->notes);
+        $this->assertEquals(510, (float) $item->reading_value);
+        $this->assertEquals(10, (float) $item->correction);
+
+        $this->actingAs($inspector)->delete("/tests/{$test->id}")
+            ->assertRedirect(route('tests.index'));
+        $this->assertDatabaseMissing('calibration_tests', ['id' => $test->id]);
+        $this->assertDatabaseMissing('calibration_test_items', ['calibration_test_id' => $test->id]);
+    }
+
+    public function test_all_roles_can_access_calibration_test_edit_and_delete(): void
+    {
+        $tester = $this->inspector();
+        $instrument = $this->makeInstrument();
+        foreach (['admin', 'inspector', 'user'] as $role) {
+            $test = CalibrationTest::create([
+                'instrument_id' => $instrument->id,
+                'test_date' => '2026-08-01',
+                'next_test_date' => '2026-09-01',
+                'tester_id' => $tester->id,
+                'status' => 'OK',
+            ]);
+            $account = $role === 'inspector' ? $tester : User::create(['name' => ucfirst($role), 'email' => "{$role}@test", 'password' => 'password']);
+            if ($role !== 'inspector') {
+                $account->assignRole($role);
+            }
+
+            $this->actingAs($account)->get("/tests/{$test->id}/edit")->assertOk();
+            $this->actingAs($account)->delete("/tests/{$test->id}")->assertRedirect(route('tests.index'));
+        }
+    }
+
     public function test_permission_middleware_blocks_inspector_from_report_export(): void
     {
         $this->actingAs($this->inspector())
