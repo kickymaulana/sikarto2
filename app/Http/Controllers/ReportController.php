@@ -83,7 +83,7 @@ class ReportController extends Controller
             'type' => $test->instrument?->type?->name,
             'brand' => $test->instrument?->brand?->name,
             'capacity' => $test->instrument?->capacity?->name,
-            'avg_correction' => $test->avg_correction,
+            'avg_correction' => $test->status,
             'acceptable_limit' => $this->acceptableLimit($test),
             'test_date' => $test->test_date?->format('d M Y'),
             'status' => $test->status,

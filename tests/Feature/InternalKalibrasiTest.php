@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Exports\InternalKalibrasiExport;
 use App\Models\AcceptableLimit;
 use App\Models\Brand;
 use App\Models\CalibrationTest;
@@ -89,6 +90,21 @@ class InternalKalibrasiTest extends TestCase
                 ->missing('tests.1'));
 
         $this->assertNotSame($may->id, $june->id);
+    }
+
+    public function test_internal_report_uses_status_for_avg_correction_and_excel(): void
+    {
+        $test = $this->makeTest('2026-05-10');
+        $test->update(['status' => 'NG', 'avg_correction' => 0.1234]);
+
+        $response = $this->actingAs($this->user())->get('/laporan/internal-kalibrasi?year=2026&month=5');
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('tests.0.id', $test->id)
+            ->where('tests.0.avg_correction', 'NG'));
+
+        $rows = $response->original?->getData()['page']['props']['tests'] ?? [];
+        $export = new InternalKalibrasiExport(collect($rows)->map(fn ($row) => (array) $row)->all());
+        $this->assertSame('NG', $export->array()[0][5]);
     }
 
     public function test_internal_report_formats_symmetric_acceptable_limit(): void
