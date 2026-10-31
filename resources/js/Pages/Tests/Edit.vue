@@ -9,11 +9,13 @@ defineOptions({ layout: AppLayout });
 type Item = { id: number; standard_value: number | string; reading_value: number | string };
 type Group = { id: number; name: string; reference_media: string };
 type Dimension = { id: number; dimension: string; label: string; min_value: number | string; max_value: number | string; measured_value: number | string; unit: string };
-const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; notes: string | null; items: Item[]; dimension_checks: Dimension[] }; groups: Group[] }>();
+const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; reported_correction: string | null; reported_acceptable_limit: string | null; notes: string | null; items: Item[]; dimension_checks: Dimension[] }; groups: Group[] }>();
 const form = reactive({
     test_date: props.test.test_date,
     status: props.test.selected_status ?? '',
     selected_group_id: props.test.selected_group_id ?? (props.groups.length === 1 ? props.groups[0].id : null),
+    reported_correction: props.test.reported_correction ?? '',
+    reported_acceptable_limit: props.test.reported_acceptable_limit ?? '',
     notes: props.test.notes ?? '',
     items: props.test.items.map((item) => ({ id: item.id, standard_value: item.standard_value, reading_value: String(item.reading_value) })),
     dimension_checks: props.test.dimension_checks.map((item) => ({ id: item.id, dimension: item.dimension, label: item.label, min_value: item.min_value, max_value: item.max_value, measured_value: String(item.measured_value), unit: item.unit })),
@@ -29,6 +31,8 @@ const submit = () => {
         test_date: form.test_date,
         status: form.status || null,
         selected_group_id: form.selected_group_id,
+        reported_correction: form.reported_correction.trim() || null,
+        reported_acceptable_limit: form.reported_acceptable_limit.trim() || null,
         notes: form.notes,
         items: isManual.value ? [] : form.items.map((item) => ({ id: item.id, reading_value: item.reading_value.trim() })),
         dimension_checks: isManual.value ? [] : form.dimension_checks.map((item) => ({ id: item.id, measured_value: item.measured_value.trim() })),
@@ -56,6 +60,10 @@ const submit = () => {
                 <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }} · {{ group.reference_media }}</option>
             </select>
             <p v-else-if="groups.length === 1" class="hint">Grup penilaian: {{ groups[0].name }} · {{ groups[0].reference_media }}</p>
+            <label for="reported-correction">Correction untuk laporan</label>
+            <input id="reported-correction" v-model="form.reported_correction" type="text" placeholder="Contoh: OK, -0,005 GR, +0,5 GR" :disabled="saving" />
+            <label for="reported-limit">Acceptable Limit untuk laporan</label>
+            <input id="reported-limit" v-model="form.reported_acceptable_limit" type="text" placeholder="Contoh: ± 0,5 GR atau -" :disabled="saving" />
         </div>
         <div v-if="Object.keys(errors).length" role="alert" class="white-card error-list">
             <p v-for="(message, key) in errors" :key="key">{{ message }}</p>

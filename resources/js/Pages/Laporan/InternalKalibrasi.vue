@@ -20,7 +20,7 @@ const props = defineProps<{
         type?: string;
         brand?: string;
         capacity?: string;
-        avg_correction?: number | null;
+        avg_correction?: string | null;
         acceptable_limit?: string | null;
         test_date?: string;
         status: string;

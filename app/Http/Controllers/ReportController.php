@@ -92,62 +92,18 @@ class ReportController extends Controller
 
     }
 
-    private function formatCorrection(CalibrationTest $test): ?string
+    private function formatCorrection(CalibrationTest $test): string
     {
-        if ($test->avg_correction === null) {
-            return $test->status;
+        if (filled($test->reported_correction)) {
+            return $test->reported_correction;
         }
 
-        $value = (float) $test->avg_correction;
-        if ($value === 0.0) {
-            return 'OK';
-        }
-
-        $unit = $test->instrument?->acceptableLimit?->unit;
-        $precision = $this->limitPrecision($test);
-        $rounded = round($value, $precision);
-        if ($rounded === 0.0) {
-            return 'OK';
-        }
-        $number = number_format(abs($rounded), $precision, ',', '');
-
-        return ($rounded > 0 ? '+' : '-').$number.($unit ? ' '.strtoupper($unit) : '');
+        return '-';
     }
 
-    private function limitPrecision(CalibrationTest $test): int
+    private function acceptableLimit(CalibrationTest $test): string
     {
-        $values = [$test->min_correction_snapshot, $test->max_correction_snapshot];
-        $precision = 0;
-        foreach ($values as $value) {
-            $text = rtrim(rtrim((string) $value, '0'), '.');
-            $separator = strrpos($text, '.');
-            $precision = max($precision, $separator === false ? 0 : strlen($text) - $separator - 1);
-        }
-
-        return $precision;
-    }
-
-    private function acceptableLimit(CalibrationTest $test): ?string
-    {
-        if ($test->min_correction_snapshot === null || $test->max_correction_snapshot === null) {
-            return null;
-        }
-
-        $min = (float) $test->min_correction_snapshot;
-        $max = (float) $test->max_correction_snapshot;
-        $unit = $test->instrument?->acceptableLimit?->unit;
-        $suffix = $unit ? ' '.strtoupper($unit) : '';
-
-        if (abs($min) === abs($max)) {
-            return '± '.$this->formatLimitNumber(abs($max)).$suffix;
-        }
-
-        return $this->formatLimitNumber($min).' s/d '.$this->formatLimitNumber($max).$suffix;
-    }
-
-    private function formatLimitNumber(float $value): string
-    {
-        return rtrim(rtrim(number_format($value, 4, ',', ''), '0'), ',');
+        return filled($test->reported_acceptable_limit) ? $test->reported_acceptable_limit : '-';
     }
 
     public function index(Request $request)

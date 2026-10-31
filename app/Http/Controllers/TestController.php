@@ -293,6 +293,9 @@ class TestController extends Controller
             'test_date' => ['required', 'date', 'before_or_equal:today'],
             'status' => ['nullable', 'in:OK,NG,SPARE,NA,SERVICE'],
             'selected_group_id' => ['nullable', 'integer'],
+            'reported_correction' => ['nullable', 'string', 'max:100'],
+            'reported_acceptable_limit' => ['nullable', 'string', 'max:100'],
+            'reported_acceptable_limit' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string'],
             'items' => ['nullable', 'array'],
             'items.*.id' => ['required', 'integer', 'distinct'],
@@ -377,6 +380,8 @@ class TestController extends Controller
                 'selected_group_name' => $selectedGroup?->name,
                 'selected_group_reference_media' => $selectedGroup?->reference_media,
                 'selected_group_order' => $selectedGroup ? $test->instrument->capacity->groups->search(fn ($group) => $group->id === $selectedGroup->id) : null,
+                'reported_correction' => $data['reported_correction'] ?? null,
+                'reported_acceptable_limit' => $data['reported_acceptable_limit'] ?? null,
                 'notes' => $data['notes'] ?? null,
             ]);
         });
