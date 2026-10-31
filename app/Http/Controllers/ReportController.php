@@ -83,13 +83,48 @@ class ReportController extends Controller
             'type' => $test->instrument?->type?->name,
             'brand' => $test->instrument?->brand?->name,
             'capacity' => $test->instrument?->capacity?->name,
-            'avg_correction' => $test->status,
+            'avg_correction' => $this->formatCorrection($test),
             'acceptable_limit' => $this->acceptableLimit($test),
             'test_date' => $test->test_date?->format('d M Y'),
             'status' => $test->status,
             'next_test_date' => $test->next_test_date?->format('d M Y'),
         ])->values();
 
+    }
+
+    private function formatCorrection(CalibrationTest $test): ?string
+    {
+        if ($test->avg_correction === null) {
+            return $test->status;
+        }
+
+        $value = (float) $test->avg_correction;
+        if ($value === 0.0) {
+            return 'OK';
+        }
+
+        $unit = $test->instrument?->acceptableLimit?->unit;
+        $precision = $this->limitPrecision($test);
+        $rounded = round($value, $precision);
+        if ($rounded === 0.0) {
+            return 'OK';
+        }
+        $number = number_format(abs($rounded), $precision, ',', '');
+
+        return ($rounded > 0 ? '+' : '-').$number.($unit ? ' '.strtoupper($unit) : '');
+    }
+
+    private function limitPrecision(CalibrationTest $test): int
+    {
+        $values = [$test->min_correction_snapshot, $test->max_correction_snapshot];
+        $precision = 0;
+        foreach ($values as $value) {
+            $text = rtrim(rtrim((string) $value, '0'), '.');
+            $separator = strrpos($text, '.');
+            $precision = max($precision, $separator === false ? 0 : strlen($text) - $separator - 1);
+        }
+
+        return $precision;
     }
 
     private function acceptableLimit(CalibrationTest $test): ?string

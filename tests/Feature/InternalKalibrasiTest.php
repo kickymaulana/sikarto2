@@ -92,19 +92,36 @@ class InternalKalibrasiTest extends TestCase
         $this->assertNotSame($may->id, $june->id);
     }
 
-    public function test_internal_report_uses_status_for_avg_correction_and_excel(): void
+    public function test_internal_report_formats_correction_and_excel(): void
     {
-        $test = $this->makeTest('2026-05-10');
-        $test->update(['status' => 'NG', 'avg_correction' => 0.1234]);
+        $zero = $this->makeTest('2026-05-10');
+        $zero->update(['avg_correction' => 0]);
+        $positive = $this->makeTest('2026-05-11');
+        $positive->update(['avg_correction' => 2]);
+        $negative = $this->makeTest('2026-05-12');
+        $negative->update(['avg_correction' => -2]);
+        $decimal = $this->makeTest('2026-05-13');
+        $decimal->update(['avg_correction' => 0.1234]);
+        $tiny = $this->makeTest('2026-05-14');
+        $tiny->update(['avg_correction' => -0.0005]);
 
         $response = $this->actingAs($this->user())->get('/laporan/internal-kalibrasi?year=2026&month=5');
-        $response->assertInertia(fn (AssertableInertia $page) => $page
-            ->where('tests.0.id', $test->id)
-            ->where('tests.0.avg_correction', 'NG'));
-
         $rows = $response->original?->getData()['page']['props']['tests'] ?? [];
+        $values = collect($rows)->mapWithKeys(fn ($row) => [$row['id'] => $row['avg_correction']])->all();
+
+        $this->assertSame('OK', $values[$zero->id]);
+        $this->assertSame('+2,0 MM', $values[$positive->id]);
+        $this->assertSame('-2,0 MM', $values[$negative->id]);
+        $this->assertSame('+0,1 MM', $values[$decimal->id]);
+        $this->assertSame('OK', $values[$tiny->id]);
+
         $export = new InternalKalibrasiExport(collect($rows)->map(fn ($row) => (array) $row)->all());
-        $this->assertSame('NG', $export->array()[0][5]);
+        $exportValues = collect($export->array())->mapWithKeys(fn ($row) => [$row[0] => $row[5]]);
+        $this->assertSame('OK', $exportValues[$zero->instrument->code]);
+        $this->assertSame('+2,0 MM', $exportValues[$positive->instrument->code]);
+        $this->assertSame('-2,0 MM', $exportValues[$negative->instrument->code]);
+        $this->assertSame('+0,1 MM', $exportValues[$decimal->instrument->code]);
+        $this->assertSame('OK', $exportValues[$tiny->instrument->code]);
     }
 
     public function test_internal_report_formats_symmetric_acceptable_limit(): void
