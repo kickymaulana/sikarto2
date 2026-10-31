@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CalibrationTest;
 use App\Models\Instrument;
+use App\Services\ReportedCalibrationValueService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -269,6 +270,12 @@ class TestController extends Controller
             ]);
             $test->items()->createMany($testItems);
             $test->dimensionChecks()->createMany($testDimensionChecks);
+            $test->load(['instrument.acceptableLimit', 'items']);
+            $reportedValues = app(ReportedCalibrationValueService::class);
+            $test->update([
+                'reported_correction' => $reportedValues->correction($test),
+                'reported_acceptable_limit' => $reportedValues->acceptableLimit($test),
+            ]);
 
             return $test;
         });
@@ -294,7 +301,6 @@ class TestController extends Controller
             'status' => ['nullable', 'in:OK,NG,SPARE,NA,SERVICE'],
             'selected_group_id' => ['nullable', 'integer'],
             'reported_correction' => ['nullable', 'string', 'max:100'],
-            'reported_acceptable_limit' => ['nullable', 'string', 'max:100'],
             'reported_acceptable_limit' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string'],
             'items' => ['nullable', 'array'],

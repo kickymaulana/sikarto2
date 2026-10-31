@@ -61,6 +61,7 @@ class ReportController extends Controller
             'instrument.capacity',
             'instrument.acceptableLimit',
             'instrument.type',
+            'items',
         ])->whereYear('test_date', $filters['year'])
             ->orderByDesc('test_date')
             ->orderByDesc('id');
@@ -94,16 +95,12 @@ class ReportController extends Controller
 
     private function formatCorrection(CalibrationTest $test): string
     {
-        if (filled($test->reported_correction)) {
-            return $test->reported_correction;
-        }
-
-        return '-';
+        return $test->reported_correction ?? '';
     }
 
     private function acceptableLimit(CalibrationTest $test): string
     {
-        return filled($test->reported_acceptable_limit) ? $test->reported_acceptable_limit : '-';
+        return $test->reported_acceptable_limit ?? '';
     }
 
     public function index(Request $request)

@@ -14,6 +14,7 @@ use App\Models\InstrumentType;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
 
@@ -75,6 +76,18 @@ class InternalKalibrasiTest extends TestCase
         ]);
     }
 
+    public function test_backfill_reported_values_fills_only_empty_fields(): void
+    {
+        $test = $this->makeTest('2026-05-10');
+        $test->update(['reported_acceptable_limit' => 'CUSTOM LIMIT']);
+
+        Artisan::call('calibration:backfill-reported-values');
+        $test->refresh();
+
+        $this->assertSame('OK', $test->reported_correction);
+        $this->assertSame('CUSTOM LIMIT', $test->reported_acceptable_limit);
+    }
+
     public function test_internal_report_filters_by_calibration_month(): void
     {
         $may = $this->makeTest('2026-05-10');
@@ -87,6 +100,8 @@ class InternalKalibrasiTest extends TestCase
                 ->where('month', 5)
                 ->has('tests', 1)
                 ->where('tests.0.id', $may->id)
+                ->where('tests.0.avg_correction', '')
+                ->where('tests.0.acceptable_limit', '')
                 ->missing('tests.1'));
 
         $this->assertNotSame($may->id, $june->id);
