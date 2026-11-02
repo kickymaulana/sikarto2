@@ -107,6 +107,30 @@ class InternalKalibrasiTest extends TestCase
         $this->assertNotSame($may->id, $june->id);
     }
 
+    public function test_internal_report_filters_by_inclusive_date_range(): void
+    {
+        $before = $this->makeTest('2026-05-09');
+        $from = $this->makeTest('2026-05-10');
+        $to = $this->makeTest('2026-05-20');
+        $after = $this->makeTest('2026-05-21');
+
+        $this->actingAs($this->user())->get('/laporan/internal-kalibrasi?year=2026&date_from=2026-05-10&date_to=2026-05-20')
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('dateFrom', '2026-05-10')
+                ->where('dateTo', '2026-05-20')
+                ->has('tests', 2)
+                ->where('tests.0.id', $to->id)
+                ->where('tests.1.id', $from->id));
+
+        $this->assertNotSame($before->id, $after->id);
+    }
+
+    public function test_internal_report_rejects_reversed_date_range(): void
+    {
+        $this->actingAs($this->user())->get('/laporan/internal-kalibrasi?date_from=2026-05-20&date_to=2026-05-10')
+            ->assertSessionHasErrors('date_to');
+    }
+
     public function test_internal_report_formats_correction_and_excel(): void
     {
         $zero = $this->makeTest('2026-05-10');

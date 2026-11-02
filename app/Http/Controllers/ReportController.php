@@ -22,6 +22,8 @@ class ReportController extends Controller
             'month' => $filters['month'],
             'factoryId' => $filters['factory_id'],
             'typeId' => $filters['type_id'],
+            'dateFrom' => $filters['date_from'],
+            'dateTo' => $filters['date_to'],
             'factories' => Factory::orderBy('name')->get(['id', 'name']),
             'types' => InstrumentType::orderBy('name')->get(['id', 'name']),
             'tests' => $tests,
@@ -31,7 +33,7 @@ class ReportController extends Controller
     public function internalKalibrasiExport(Request $request)
     {
         $filters = $this->internalKalibrasiFilters($request);
-        $fileName = 'Internal_Kalibrasi_Record_'.$filters['year'].($filters['month'] ? '_'.str_pad((string) $filters['month'], 2, '0', STR_PAD_LEFT) : '').'.xlsx';
+        $fileName = 'Internal_Kalibrasi_Record_'.$filters['year'].($filters['month'] ? '_'.str_pad((string) $filters['month'], 2, '0', STR_PAD_LEFT) : '').($filters['date_from'] ? '_from_'.$filters['date_from'] : '').($filters['date_to'] ? '_to_'.$filters['date_to'] : '').'.xlsx';
 
         return Excel::download(new InternalKalibrasiExport($this->internalKalibrasiRows($filters)->all()), $fileName);
     }
@@ -43,6 +45,8 @@ class ReportController extends Controller
             'month' => ['nullable', 'integer', 'between:1,12'],
             'factory_id' => ['nullable', 'integer', 'exists:factories,id'],
             'type_id' => ['nullable', 'integer', 'exists:instrument_types,id'],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
         ]);
 
         return [
@@ -50,6 +54,8 @@ class ReportController extends Controller
             'month' => isset($validated['month']) ? (int) $validated['month'] : null,
             'factory_id' => isset($validated['factory_id']) ? (int) $validated['factory_id'] : null,
             'type_id' => isset($validated['type_id']) ? (int) $validated['type_id'] : null,
+            'date_from' => $validated['date_from'] ?? null,
+            'date_to' => $validated['date_to'] ?? null,
         ];
     }
 
@@ -68,6 +74,12 @@ class ReportController extends Controller
 
         if ($filters['month']) {
             $query->whereMonth('test_date', $filters['month']);
+        }
+        if ($filters['date_from']) {
+            $query->whereDate('test_date', '>=', $filters['date_from']);
+        }
+        if ($filters['date_to']) {
+            $query->whereDate('test_date', '<=', $filters['date_to']);
         }
 
         if ($filters['factory_id']) {

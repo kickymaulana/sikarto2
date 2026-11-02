@@ -3,6 +3,7 @@ import { router } from '@inertiajs/vue3';
 import { route } from 'ziggy-js';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import LaporanSidebar from './Sidebar.vue';
+import { ref, watch } from 'vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -11,6 +12,8 @@ const props = defineProps<{
     month: number | null;
     factoryId: number | null;
     typeId: number | null;
+    dateFrom: string | null;
+    dateTo: string | null;
     factories: Array<{ id: number; name: string }>;
     types: Array<{ id: number; name: string }>;
     tests: Array<{
@@ -32,10 +35,24 @@ const years = Array.from({ length: 11 }, (_, index) => ({ label: String(2020 + i
 const months = [{ label: 'Semua Bulan', value: '' }, ...['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'].map((label, index) => ({ label, value: String(index + 1) }))];
 const factoryOptions = [{ label: 'Semua Pabrik', value: '' }, ...props.factories.map((factory) => ({ label: factory.name, value: String(factory.id) }))];
 const typeOptions = [{ label: 'Semua Jenis', value: '' }, ...props.types.map((type) => ({ label: type.name, value: String(type.id) }))];
+const dateFrom = ref(props.dateFrom ?? '');
+const dateTo = ref(props.dateTo ?? '');
+watch(() => props.dateFrom, (value) => { dateFrom.value = value ?? ''; });
+watch(() => props.dateTo, (value) => { dateTo.value = value ?? ''; });
 
-const apply = (params: Record<string, string | undefined>) => {
-    router.get(route('laporan.internal-kalibrasi', params), {}, { preserveState: true, preserveScroll: true });
+const activeParams = () => ({
+    year: String(props.year),
+    month: props.month?.toString(),
+    factory_id: props.factoryId?.toString(),
+    type_id: props.typeId?.toString(),
+    date_from: props.dateFrom ?? undefined,
+    date_to: props.dateTo ?? undefined,
+});
+const apply = (overrides: Record<string, string | undefined>) => {
+    router.get(route('laporan.internal-kalibrasi', { ...activeParams(), ...overrides }), {}, { preserveState: true, preserveScroll: true });
 };
+const applyDates = () => apply({ date_from: dateFrom.value || undefined, date_to: dateTo.value || undefined });
+const resetDates = () => { dateFrom.value = ''; dateTo.value = ''; applyDates(); };
 
 const statusLabel = (status: string) => status === 'OK' ? 'Accepted' : status === 'NG' ? 'Not Accepted' : status;
 const statusType = (status: string) => status === 'OK' ? 'success' : status === 'NG' ? 'danger' : 'warning';
@@ -53,7 +70,11 @@ const statusType = (status: string) => status === 'OK' ? 'success' : status === 
             <select class="control" :value="String(month ?? '')" @change="apply({ year: String(year), month: ($event.target as HTMLSelectElement).value || undefined, factory_id: factoryId?.toString(), type_id: typeId?.toString() })"><option v-for="option in months" :key="option.value" :value="option.value">{{ option.label }}</option></select>
             <select class="control" :value="String(factoryId ?? '')" @change="apply({ year: String(year), month: month?.toString(), factory_id: ($event.target as HTMLSelectElement).value || undefined, type_id: typeId?.toString() })"><option v-for="option in factoryOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
             <select class="control" :value="String(typeId ?? '')" @change="apply({ year: String(year), month: month?.toString(), factory_id: factoryId?.toString(), type_id: ($event.target as HTMLSelectElement).value || undefined })"><option v-for="option in typeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-            <a class="export-btn" :href="route('laporan.internal-kalibrasi.export', { year, month: month ?? undefined, factory_id: factoryId ?? undefined, type_id: typeId ?? undefined })">
+            <label class="date-filter">Dari <input v-model="dateFrom" type="date" :max="dateTo || undefined" /></label>
+            <label class="date-filter">Sampai <input v-model="dateTo" type="date" :min="dateFrom || undefined" /></label>
+            <button type="button" class="filter-btn" @click="applyDates">Terapkan</button>
+            <button v-if="dateFrom || dateTo" type="button" class="filter-btn secondary" @click="resetDates">Reset Tanggal</button>
+            <a class="export-btn" :href="route('laporan.internal-kalibrasi.export', { ...activeParams() })">
                 <span class="export-button">Export Excel</span>
             </a>
         </div>
@@ -82,6 +103,10 @@ const statusType = (status: string) => status === 'OK' ? 'success' : status === 
 .content-head { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; }
 .page-title { margin: 0; font-size: 18px; font-weight: 700; color: #1e293b; }
 .toolbar { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.date-filter { display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 12px; }
+.date-filter input { padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 10px; font: inherit; color: #334155; }
+.filter-btn { border: 0; border-radius: 10px; padding: 9px 12px; background: #f97316; color: white; font-size: 12px; font-weight: 700; }
+.filter-btn.secondary { background: #e2e8f0; color: #475569; }
 .filter-field { width: 200px; }
 .table-wrap { overflow: hidden; }
 .table-scroll { overflow-x: auto; }
