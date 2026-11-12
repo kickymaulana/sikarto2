@@ -21,7 +21,7 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
         return [
             'Kode Alat', 'Lokasi', 'Jenis Alat', 'Merek', 'Kapasitas', 'Avg Correction',
             'Reference Document', 'Acceptable Limit', 'Tgl Kalibrasi', 'Frek Kalibrasi',
-            'Hasil Kalibrasi', 'Next Kalibrasi',
+            'Hasil Kalibrasi', 'Next Kalibrasi', 'Inspector/Penguji',
         ];
     }
 
@@ -40,6 +40,7 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
             'PER 1 BULAN',
             $row['status'] === 'OK' ? 'Accepted' : ($row['status'] === 'NG' ? 'Not Accepted' : $row['status']),
             $row['next_test_date'] ?? '—',
+            $row['tester'] ?? '—',
         ], $this->rows);
     }
 
@@ -49,7 +50,7 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
             AfterSheet::class => function (AfterSheet $event) {
                 $sheet = $event->sheet->getDelegate();
                 $lastRow = count($this->rows) + 1;
-                $lastColumn = 'L';
+                $lastColumn = 'M';
 
                 $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
                 $sheet->getPageSetup()->setPaperSize(PageSetup::PAPERSIZE_A4);

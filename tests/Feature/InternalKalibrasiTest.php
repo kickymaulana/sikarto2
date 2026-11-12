@@ -102,6 +102,7 @@ class InternalKalibrasiTest extends TestCase
                 ->where('tests.0.id', $may->id)
                 ->where('tests.0.avg_correction', '')
                 ->where('tests.0.acceptable_limit', '')
+                ->where('tests.0.tester', 'Inspector')
                 ->missing('tests.1'));
 
         $this->assertNotSame($may->id, $june->id);
@@ -155,7 +156,11 @@ class InternalKalibrasiTest extends TestCase
         $this->assertSame('OK', $values[$tiny->id]);
 
         $export = new InternalKalibrasiExport(collect($rows)->map(fn ($row) => (array) $row)->all());
-        $exportValues = collect($export->array())->mapWithKeys(fn ($row) => [$row[0] => $row[5]]);
+        $exportRows = $export->array();
+        $exportValues = collect($exportRows)->mapWithKeys(fn ($row) => [$row[0] => $row[5]]);
+        $this->assertCount(13, $export->headings());
+        $this->assertSame('Inspector/Penguji', $export->headings()[12]);
+        $this->assertSame('Inspector', $exportRows[0][12]);
         $this->assertSame('OK', $exportValues[$zero->instrument->code]);
         $this->assertSame('+2 GR', $exportValues[$positive->instrument->code]);
         $this->assertSame('-2 GR', $exportValues[$negative->instrument->code]);

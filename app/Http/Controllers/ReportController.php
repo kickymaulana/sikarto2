@@ -67,6 +67,7 @@ class ReportController extends Controller
             'instrument.capacity',
             'instrument.acceptableLimit',
             'instrument.type',
+            'tester',
             'items',
         ])->whereYear('test_date', $filters['year'])
             ->orderByDesc('test_date')
@@ -101,6 +102,7 @@ class ReportController extends Controller
             'test_date' => $test->test_date?->format('d M Y'),
             'status' => $test->status,
             'next_test_date' => $test->next_test_date?->format('d M Y'),
+            'tester' => $test->tester?->name,
         ])->values();
 
     }

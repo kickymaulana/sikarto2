@@ -28,6 +28,7 @@ const props = defineProps<{
         test_date?: string;
         status: string;
         next_test_date?: string;
+        tester?: string;
     }>;
 }>();
 
@@ -84,14 +85,14 @@ const statusType = (status: string) => status === 'OK' ? 'success' : status === 
                 <table class="record-table">
                     <thead>
                         <tr>
-                            <th>Kode Alat</th><th>Lokasi</th><th>Jenis Alat</th><th>Merek</th><th>Kapasitas</th><th>Avg Correction</th><th>Reference Document</th><th>Acceptable Limit</th><th>Tgl Kalibrasi</th><th>Frek Kalibrasi</th><th>Hasil Kalibrasi</th><th>Next Kalibrasi</th>
+                            <th>Kode Alat</th><th>Lokasi</th><th>Jenis Alat</th><th>Merek</th><th>Kapasitas</th><th>Avg Correction</th><th>Reference Document</th><th>Acceptable Limit</th><th>Tgl Kalibrasi</th><th>Frek Kalibrasi</th><th>Hasil Kalibrasi</th><th>Next Kalibrasi</th><th>Inspector/Penguji</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-for="test in tests" :key="test.id">
-                            <td class="code">{{ test.code ?? '—' }}</td><td>{{ test.location ?? '—' }}</td><td>{{ test.type ?? '—' }}</td><td>{{ test.brand ?? '—' }}</td><td>{{ test.capacity ?? '—' }}</td><td>{{ test.avg_correction ?? '—' }}</td><td>MDDWI-QA22</td><td>{{ test.acceptable_limit ?? '—' }}</td><td>{{ test.test_date ?? '—' }}</td><td>PER 1 BULAN</td><td><span class="status-badge" :class="test.status === 'OK' ? 'ok' : test.status === 'NG' ? 'ng' : 'warning'">{{ statusLabel(test.status) }}</span></td><td>{{ test.next_test_date ?? '—' }}</td>
+                            <td class="code">{{ test.code ?? '—' }}</td><td>{{ test.location ?? '—' }}</td><td>{{ test.type ?? '—' }}</td><td>{{ test.brand ?? '—' }}</td><td>{{ test.capacity ?? '—' }}</td><td>{{ test.avg_correction ?? '—' }}</td><td>MDDWI-QA22</td><td>{{ test.acceptable_limit ?? '—' }}</td><td>{{ test.test_date ?? '—' }}</td><td>PER 1 BULAN</td><td><span class="status-badge" :class="test.status === 'OK' ? 'ok' : test.status === 'NG' ? 'ng' : 'warning'">{{ statusLabel(test.status) }}</span></td><td>{{ test.next_test_date ?? '—' }}</td><td>{{ test.tester ?? '—' }}</td>
                         </tr>
-                        <tr v-if="tests.length === 0"><td colspan="12" class="empty">Tidak ada data kalibrasi.</td></tr>
+                        <tr v-if="tests.length === 0"><td colspan="13" class="empty">Tidak ada data kalibrasi.</td></tr>
                     </tbody>
                 </table>
             </div>
