@@ -9,7 +9,21 @@ defineOptions({ layout: AppLayout });
 type Item = { id: number; standard_value: number | string; reading_value: number | string };
 type Group = { id: number; name: string; reference_media: string };
 type Dimension = { id: number; dimension: string; label: string; min_value: number | string; max_value: number | string; measured_value: number | string; unit: string };
-const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; reported_correction: string | null; reported_acceptable_limit: string | null; notes: string | null; items: Item[]; dimension_checks: Dimension[] }; groups: Group[] }>();
+type StraightnessKey = 'dudukan' | 'tiang_kelurusan' | 'titik_tengah';
+type StraightnessChecks = Record<StraightnessKey, string>;
+const straightnessFields: Array<{ key: StraightnessKey; label: string }> = [
+    { key: 'dudukan', label: 'Dudukan' },
+    { key: 'tiang_kelurusan', label: 'Tiang / Kelurusan' },
+    { key: 'titik_tengah', label: 'Titik Tengah' },
+];
+const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; reported_correction: string | null; reported_acceptable_limit: string | null; notes: string | null; items: Item[]; dimension_checks: Dimension[]; straightness_checks: StraightnessChecks | null; instrument?: { type?: { name: string } | null } | null }; groups: Group[]; straightnessSuggestions: Record<StraightnessKey, string[]> }>();
+const isStraightness = computed(() => props.test.straightness_checks != null || props.test.instrument?.type?.name.trim().toUpperCase() === 'STRAIGHTNESS');
+const straightnessChecks = reactive<StraightnessChecks>({
+    dudukan: props.test.straightness_checks?.dudukan ?? '',
+    tiang_kelurusan: props.test.straightness_checks?.tiang_kelurusan ?? '',
+    titik_tengah: props.test.straightness_checks?.titik_tengah ?? '',
+});
+const normalizeStraightness = (key: StraightnessKey) => { straightnessChecks[key] = straightnessChecks[key].replace(/\s+/gu, ' ').trim().toUpperCase(); };
 const form = reactive({
     test_date: props.test.test_date,
     status: props.test.selected_status ?? '',
@@ -23,19 +37,25 @@ const form = reactive({
 const saving = ref(false);
 const errors = ref<Record<string, string>>({});
 const isManual = computed(() => ['SPARE', 'NA', 'SERVICE'].includes(form.status));
+const straightnessReady = computed(() => ['OK', 'NG'].includes(form.status) && straightnessFields.every(({ key }) => !!straightnessChecks[key].trim()));
 const submit = () => {
-    if (saving.value) return;
+    if (saving.value || (isStraightness.value && !straightnessReady.value)) return;
     saving.value = true;
     errors.value = {};
     router.put(route('tests.update', props.test.id), {
         test_date: form.test_date,
-        status: form.status || null,
-        selected_group_id: form.selected_group_id,
-        reported_correction: form.reported_correction.trim() || null,
-        reported_acceptable_limit: form.reported_acceptable_limit.trim() || null,
         notes: form.notes,
-        items: isManual.value ? [] : form.items.map((item) => ({ id: item.id, reading_value: item.reading_value.trim() })),
-        dimension_checks: isManual.value ? [] : form.dimension_checks.map((item) => ({ id: item.id, measured_value: item.measured_value.trim() })),
+        ...(isStraightness.value ? {
+            selected_status: form.status,
+            straightness_checks: { ...straightnessChecks },
+        } : {
+            status: form.status || null,
+            selected_group_id: form.selected_group_id,
+            reported_correction: form.reported_correction.trim() || null,
+            reported_acceptable_limit: form.reported_acceptable_limit.trim() || null,
+            items: isManual.value ? [] : form.items.map((item) => ({ id: item.id, reading_value: item.reading_value.trim() })),
+            dimension_checks: isManual.value ? [] : form.dimension_checks.map((item) => ({ id: item.id, measured_value: item.measured_value.trim() })),
+        }),
     }, {
         onError: (messages) => { errors.value = messages; },
         onFinish: () => { saving.value = false; },
@@ -51,9 +71,11 @@ const submit = () => {
             <input id="test-date" v-model="form.test_date" type="date" :disabled="saving" />
             <label for="status">Status pilihan</label>
             <select id="status" v-model="form.status" class="control" :disabled="saving">
-                <option value="">Otomatis</option>
-                <option v-for="status in ['OK', 'NG', 'SPARE', 'NA', 'SERVICE']" :key="status" :value="status">{{ status }}</option>
+                <option value="">{{ isStraightness ? 'Pilih OK atau NG' : 'Otomatis' }}</option>
+                <option v-for="status in (isStraightness ? ['OK', 'NG'] : ['OK', 'NG', 'SPARE', 'NA', 'SERVICE'])" :key="status" :value="status">{{ status }}</option>
             </select>
+            <p v-if="errors.selected_status" class="error-list">{{ errors.selected_status }}</p>
+            <template v-if="!isStraightness">
             <label v-if="groups.length > 1" for="scoring-group">Grup penentu rata-rata dan status</label>
             <select v-if="groups.length > 1" id="scoring-group" v-model="form.selected_group_id" class="control" :disabled="saving">
                 <option :value="null">Pilih grup penilaian</option>
@@ -64,18 +86,29 @@ const submit = () => {
             <input id="reported-correction" v-model="form.reported_correction" type="text" placeholder="Contoh: OK, -0,005 GR, +0,5 GR" :disabled="saving" />
             <label for="reported-limit">Acceptable Limit untuk laporan</label>
             <input id="reported-limit" v-model="form.reported_acceptable_limit" type="text" placeholder="Contoh: ± 0,5 GR atau -" :disabled="saving" />
+            </template>
+        </div>
+        <div v-if="isStraightness" class="white-card">
+            <h3 class="card-title">Pemeriksaan Straightness</h3>
+            <p class="hint">Isi hasil pemeriksaan atau pilih saran riwayat. Teks baru diperbolehkan. Status OK atau NG wajib dipilih; tidak ada perhitungan otomatis.</p>
+            <div v-for="field in straightnessFields" :key="field.key" class="item-row">
+                <label :for="`straightness-${field.key}`">{{ field.label }}</label>
+                <input :id="`straightness-${field.key}`" v-model="straightnessChecks[field.key]" type="text" maxlength="255" :list="`straightness-options-${field.key}`" :disabled="saving" :aria-invalid="!!errors[`straightness_checks.${field.key}`]" :aria-describedby="`straightness-error-${field.key}`" @blur="normalizeStraightness(field.key)" />
+                <datalist :id="`straightness-options-${field.key}`"><option v-for="suggestion in (straightnessSuggestions[field.key] ?? []).slice(0, 20)" :key="suggestion" :value="suggestion" /></datalist>
+                <p v-if="errors[`straightness_checks.${field.key}`]" :id="`straightness-error-${field.key}`" class="error-list">{{ errors[`straightness_checks.${field.key}`] }}</p>
+            </div>
         </div>
         <div v-if="Object.keys(errors).length" role="alert" class="white-card error-list">
             <p v-for="(message, key) in errors" :key="key">{{ message }}</p>
         </div>
-        <div v-if="!isManual && form.items.length" class="white-card">
+        <div v-if="!isStraightness && !isManual && form.items.length" class="white-card">
             <h3 class="card-title">Titik Uji</h3>
             <div v-for="item in form.items" :key="item.id" class="item-row">
                 <label :for="`item-${item.id}`">Standar {{ item.standard_value }}</label>
                 <input :id="`item-${item.id}`" v-model="item.reading_value" type="text" inputmode="decimal" :disabled="saving" />
             </div>
         </div>
-        <div v-if="!isManual && form.dimension_checks.length" class="white-card">
+        <div v-if="!isStraightness && !isManual && form.dimension_checks.length" class="white-card">
             <h3 class="card-title">Pemeriksaan Ukuran</h3>
             <div v-for="item in form.dimension_checks" :key="item.id" class="item-row">
                 <label :for="`dimension-${item.id}`">{{ item.label }} ({{ item.min_value }} s/d {{ item.max_value }} {{ item.unit }})</label>
@@ -85,7 +118,7 @@ const submit = () => {
         <div class="white-card">
             <label for="notes">Catatan</label>
             <textarea id="notes" v-model="form.notes" class="control min-h-24" :disabled="saving" />
-            <button type="button" class="submit-btn" :disabled="saving" @click="submit">{{ saving ? 'Menyimpan...' : 'Simpan Perubahan' }}</button>
+            <button type="button" class="submit-btn" :disabled="saving || (isStraightness && !straightnessReady)" @click="submit">{{ saving ? 'Menyimpan...' : 'Simpan Perubahan' }}</button>
         </div>
     </div>
 </template>

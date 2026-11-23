@@ -14,10 +14,17 @@ use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 
 class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, WithHeadings
 {
-    public function __construct(private readonly array $rows) {}
+    public function __construct(private readonly array $rows, private readonly string $mode = 'default') {}
 
     public function headings(): array
     {
+        if ($this->mode === 'straightness') {
+            return [
+                'NO.', 'KODE', 'LOKASI', 'DUDUKAN', 'TIANG KELURUSAN', 'TITIK TENGAH',
+                'TGL KALIBRASI', 'FREK KALIBRASI', 'HASIL KALIBRASI', 'DUE DATE', 'KALIBRATOR',
+            ];
+        }
+
         return [
             'Kode Alat', 'Lokasi', 'Jenis Alat', 'Merek', 'Kapasitas', 'Avg Correction',
             'Reference Document', 'Acceptable Limit', 'Tgl Kalibrasi', 'Frek Kalibrasi',
@@ -27,6 +34,22 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
 
     public function array(): array
     {
+        if ($this->mode === 'straightness') {
+            return array_map(fn (array $row, int $index) => [
+                $index + 1,
+                $row['code'] ?? '—',
+                $row['location'] ?? '—',
+                $row['dudukan'] ?? '—',
+                $row['tiang_kelurusan'] ?? '—',
+                $row['titik_tengah'] ?? '—',
+                $row['test_date'] ?? '—',
+                'PERBULAN',
+                $row['status'] === 'OK' ? 'ACCEPTED' : ($row['status'] === 'NG' ? 'NOT ACCEPTED' : $row['status']),
+                $row['next_test_date'] ?? '—',
+                $row['tester'] ?? '—',
+            ], $this->rows, array_keys($this->rows));
+        }
+
         return array_map(fn (array $row) => [
             $row['code'] ?? '—',
             $row['location'] ?? '—',
@@ -50,7 +73,7 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
             AfterSheet::class => function (AfterSheet $event) {
                 $sheet = $event->sheet->getDelegate();
                 $lastRow = count($this->rows) + 1;
-                $lastColumn = 'M';
+                $lastColumn = $this->mode === 'straightness' ? 'K' : 'M';
 
                 $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
                 $sheet->getPageSetup()->setPaperSize(PageSetup::PAPERSIZE_A4);

@@ -9,7 +9,7 @@ class CalibrationTest extends Model
     protected $fillable = [
         'instrument_id', 'test_date', 'next_test_date', 'tester_id', 'status', 'avg_correction', 'reported_correction', 'reported_acceptable_limit', 'notes',
         'computed_status', 'selected_status', 'min_correction_snapshot', 'max_correction_snapshot',
-        'selected_group_id', 'selected_group_name', 'selected_group_reference_media', 'selected_group_order',
+        'selected_group_id', 'selected_group_name', 'selected_group_reference_media', 'selected_group_order', 'straightness_checks',
     ];
 
     protected function casts(): array
@@ -18,6 +18,7 @@ class CalibrationTest extends Model
             'test_date' => 'date',
             'next_test_date' => 'date',
             'avg_correction' => 'float',
+            'straightness_checks' => 'array',
         ];
     }
 

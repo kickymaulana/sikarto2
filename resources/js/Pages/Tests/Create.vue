@@ -32,7 +32,17 @@ type Point = { standard_template_id: number; standard_value: Decimal; reading_va
 type Group = { id: number; name: string; reference_media: string; open: boolean; points: Point[] };
 type DimensionCheck = { dimension: string; label: string; min: Decimal; max: Decimal; measured_value: string };
 type InstrumentOption = { id: number; code: string };
-const props = defineProps<{ instruments: Instrument[] }>();
+type StraightnessKey = 'dudukan' | 'tiang_kelurusan' | 'titik_tengah';
+const straightnessFields: Array<{ key: StraightnessKey; label: string }> = [
+    { key: 'dudukan', label: 'Dudukan' },
+    { key: 'tiang_kelurusan', label: 'Tiang / Kelurusan' },
+    { key: 'titik_tengah', label: 'Titik Tengah' },
+];
+const props = defineProps<{ instruments: Instrument[]; straightnessSuggestions: Record<StraightnessKey, string[]> }>();
+const straightnessChecks = reactive<Record<StraightnessKey, string>>({ dudukan: '', tiang_kelurusan: '', titik_tengah: '' });
+const isStraightness = computed(() => selected.value?.type?.name.trim().toUpperCase() === 'STRAIGHTNESS');
+const straightnessReady = computed(() => ['OK', 'NG'].includes(form.status) && straightnessFields.every(({ key }) => !!straightnessChecks[key].trim()));
+const normalizeStraightness = (key: StraightnessKey) => { straightnessChecks[key] = straightnessChecks[key].replace(/\s+/gu, ' ').trim().toUpperCase(); };
 const selected = ref<Instrument | null>(null);
 const search = ref('');
 const searchResults = ref<InstrumentOption[]>(props.instruments.map(({ id, code }) => ({ id, code })));
@@ -89,7 +99,7 @@ const limitValid = computed(() => {
 });
 const computedStatus = computed(() => {
     const limit = selected.value?.acceptable_limit;
-    if (isManual.value || avgCorrection.value === null || !limit || !limitValid.value) return '';
+    if (isStraightness.value || isManual.value || avgCorrection.value === null || !limit || !limitValid.value) return '';
     return avgCorrection.value >= Number(limit.min_correction) && avgCorrection.value <= Number(limit.max_correction) ? 'OK' : 'NG';
 });
 const finalStatus = computed(() => form.status || computedStatus.value);
@@ -103,13 +113,20 @@ const dimensionStatus = (check: DimensionCheck) => {
 };
 const hasCalibrationPoints = computed(() => items.value.length > 0);
 const measurementReady = computed(() => (hasCalibrationPoints.value ? allFilled.value && limitValid.value : dimensionChecks.value.length > 0 && ['OK', 'NG'].includes(form.status)) && dimensionsFilled.value);
-const canSubmit = computed(() => !!selected.value && (groups.value.length <= 1 || !!selectedGroupId.value) && !!form.test_date && form.test_date <= localToday && (isManual.value || measurementReady.value));
+const canSubmit = computed(() => !!selected.value && !!form.test_date && form.test_date <= localToday && (isStraightness.value ? straightnessReady.value : (groups.value.length <= 1 || !!selectedGroupId.value) && (isManual.value || measurementReady.value)));
 const pointErrors = (point: Point) => Object.entries(errors.value).filter(([key]) => key === `items.${point.index}` || key.startsWith(`items.${point.index}.`));
 const applyInstrument = (instrument: Instrument) => {
     selected.value = instrument;
     form.instrument_id = instrument.id;
     form.status = '';
     errors.value = {};
+    straightnessFields.forEach(({ key }) => { straightnessChecks[key] = ''; });
+    if (isStraightness.value) {
+        groups.value = [];
+        selectedGroupId.value = null;
+        dimensionChecks.value = [];
+        return;
+    }
     let index = 0;
     groups.value = (instrument.capacity?.groups ?? []).map((group, groupIndex) => ({
         id: group.id,
@@ -178,9 +195,9 @@ const submit = () => {
         instrument_id: form.instrument_id,
         test_date: form.test_date,
         notes: form.notes,
-        ...(form.status ? { status: form.status } : {}),
-        ...(selectedGroupId.value ? { selected_group_id: selectedGroupId.value } : {}),
-        ...(!isManual.value ? {
+        ...(isStraightness.value ? { selected_status: form.status, straightness_checks: { ...straightnessChecks } } : form.status ? { status: form.status } : {}),
+        ...(!isStraightness.value && selectedGroupId.value ? { selected_group_id: selectedGroupId.value } : {}),
+        ...(!isStraightness.value && !isManual.value ? {
             items: items.value.map((point) => ({ standard_template_id: point.standard_template_id, reading_value: point.reading_value.trim() })),
             dimension_checks: dimensionChecks.value.map((check) => ({ dimension: check.dimension, measured_value: check.measured_value.trim() })),
         } : {}),
@@ -242,11 +259,22 @@ if (import.meta.env.DEV) {
         <label for="test-date">Tanggal Uji</label>
         <input id="test-date" v-model="form.test_date" type="date" :max="localToday" :disabled="saving" />
         <div class="field-block">
-            <label class="field-label">Status pilihan (menggantikan otomatis)</label>
-            <select v-model="form.status" class="control" :disabled="saving"><option value="">Otomatis</option><option v-for="status in ['OK', 'NG', 'SPARE', 'NA', 'SERVICE']" :key="status" :value="status">{{ status }}</option></select>
+            <label class="field-label" for="status">{{ isStraightness ? 'Status pilihan (wajib)' : 'Status pilihan (menggantikan otomatis)' }}</label>
+            <select id="status" v-model="form.status" class="control" :disabled="saving" :aria-invalid="!!errors.selected_status"><option value="">{{ isStraightness ? 'Pilih OK atau NG' : 'Otomatis' }}</option><option v-for="status in (isStraightness ? ['OK', 'NG'] : ['OK', 'NG', 'SPARE', 'NA', 'SERVICE'])" :key="status" :value="status">{{ status }}</option></select>
+            <p v-if="errors.selected_status" class="error-list">{{ errors.selected_status }}</p>
         </div>
         <div v-if="isManual" class="notice info">Status {{ form.status }} mengabaikan pengukuran. Input tetap tersimpan sementara di halaman ini, tetapi tidak dikirim atau disimpan sebagai hasil uji.</div>
-        <div v-show="!isManual" class="items-list">
+        <div v-if="isStraightness" class="items-list">
+            <h3 class="card-title">Pemeriksaan Straightness</h3>
+            <p class="search-state">Isi hasil pemeriksaan atau pilih saran riwayat. Teks baru diperbolehkan. Pilih status OK atau NG; tidak ada perhitungan otomatis.</p>
+            <div v-for="field in straightnessFields" :key="field.key" class="item-row">
+                <label :for="`straightness-${field.key}`">{{ field.label }}</label>
+                <input :id="`straightness-${field.key}`" v-model="straightnessChecks[field.key]" type="text" maxlength="255" :list="`straightness-options-${field.key}`" :disabled="saving" :aria-invalid="!!errors[`straightness_checks.${field.key}`]" :aria-describedby="`straightness-error-${field.key}`" @blur="normalizeStraightness(field.key)" />
+                <datalist :id="`straightness-options-${field.key}`"><option v-for="suggestion in (straightnessSuggestions[field.key] ?? []).slice(0, 20)" :key="suggestion" :value="suggestion" /></datalist>
+                <p v-if="errors[`straightness_checks.${field.key}`]" :id="`straightness-error-${field.key}`" class="error-list">{{ errors[`straightness_checks.${field.key}`] }}</p>
+            </div>
+        </div>
+        <div v-show="!isManual && !isStraightness" class="items-list">
             <p v-if="!groups.length && !dimensionChecks.length">Alat belum memiliki titik uji kapasitas atau pemeriksaan ukuran. Lengkapi master atau pilih SPARE/NA/SERVICE.</p>
             <details v-for="group in groups" :key="group.id" :open="group.open" class="group-card" @toggle="group.open = ($event.target as HTMLDetailsElement).open">
                 <summary>{{ group.name }} · {{ progress(group) }}/{{ group.points.length }} titik valid</summary>
@@ -283,8 +311,8 @@ if (import.meta.env.DEV) {
         </div>
         <textarea v-model="form.notes" class="control min-h-24" placeholder="Catatan (opsional)" :disabled="saving" />
         <div class="result" aria-live="polite">
-            <p>{{ scoringLabel }}: {{ isManual ? '—' : avgCorrection ?? '—' }} {{ isManual ? '' : unit }}</p>
-            <p>Otomatis: {{ computedStatus || (isManual ? 'Tidak dihitung' : 'Menunggu semua titik valid') }}</p>
+            <p v-if="!isStraightness">{{ scoringLabel }}: {{ isManual ? '—' : avgCorrection ?? '—' }} {{ isManual ? '' : unit }}</p>
+            <p>Otomatis: {{ computedStatus || (isManual || isStraightness ? 'Tidak dihitung' : 'Menunggu semua titik valid') }}</p>
             <p>Pilihan: {{ form.status || 'Tidak dipilih' }}</p>
             <strong>Status efektif: {{ finalStatus || '—' }}</strong>
         </div>

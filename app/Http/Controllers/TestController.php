@@ -40,6 +40,7 @@ class TestController extends Controller
     {
         return Inertia::render('Tests/Create', [
             'instruments' => [],
+            'straightnessSuggestions' => $this->straightnessSuggestions(),
         ]);
     }
 
@@ -51,6 +52,7 @@ class TestController extends Controller
 
         $search = $data['search'];
         $instruments = Instrument::query()
+            ->with('type:id,name')
             ->where('is_active', true)
             ->where(function ($query) use ($search) {
                 $query->where('code', 'like', "%{$search}%")
@@ -59,7 +61,7 @@ class TestController extends Controller
             })
             ->orderBy('code')
             ->limit(20)
-            ->get(['id', 'code']);
+            ->get(['id', 'code', 'instrument_type_id']);
 
         return response()->json(['data' => $instruments]);
     }
@@ -134,19 +136,27 @@ class TestController extends Controller
         ]);
         $selectedStatus = $data['status'] ?? null;
         $isManual = in_array($selectedStatus, ['SPARE', 'NA', 'SERVICE'], true);
-        $items = $isManual ? [] : $request->validate([
-            'items' => 'nullable|array',
-            'items.*.standard_template_id' => 'required|integer|distinct',
-            'items.*.reading_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
-        ])['items'] ?? [];
-        $dimensionChecks = $isManual ? [] : $request->validate([
-            'dimension_checks' => 'nullable|array',
-            'dimension_checks.*.dimension' => 'required|string|distinct|in:length,width,diameter',
-            'dimension_checks.*.measured_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
-        ])['dimension_checks'] ?? [];
 
-        $test = DB::transaction(function () use ($request, $data, $selectedStatus, $isManual, $items, $dimensionChecks) {
-            $instrument = Instrument::with(['acceptableLimit', 'capacity.groups.standards', 'specification'])->lockForUpdate()->findOrFail($data['instrument_id']);
+        $test = DB::transaction(function () use ($request, $data, $selectedStatus, $isManual) {
+            $instrument = Instrument::with(['type', 'acceptableLimit', 'capacity.groups.standards', 'specification'])->lockForUpdate()->findOrFail($data['instrument_id']);
+            if (mb_strtoupper(trim($instrument->type?->name ?? '')) === 'STRAIGHTNESS') {
+                return $this->saveStraightness($request, new CalibrationTest([
+                    'instrument_id' => $instrument->id,
+                    'tester_id' => $request->user()->id,
+                ]));
+            }
+
+            $items = $isManual ? [] : $request->validate([
+                'items' => 'nullable|array',
+                'items.*.standard_template_id' => 'required|integer|distinct',
+                'items.*.reading_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
+            ])['items'] ?? [];
+            $dimensionChecks = $isManual ? [] : $request->validate([
+                'dimension_checks' => 'nullable|array',
+                'dimension_checks.*.dimension' => 'required|string|distinct|in:length,width,diameter',
+                'dimension_checks.*.measured_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
+            ])['dimension_checks'] ?? [];
+
             $limit = $instrument->acceptableLimit;
             $computedStatus = null;
             $avgCorrection = null;
@@ -291,11 +301,21 @@ class TestController extends Controller
         return Inertia::render('Tests/Edit', [
             'test' => $test,
             'groups' => $test->instrument?->capacity?->groups ?? [],
+            'straightnessSuggestions' => $this->straightnessSuggestions(),
         ]);
     }
 
     public function update(Request $request, CalibrationTest $test)
     {
+        if ($test->straightness_checks !== null || mb_strtoupper(trim($test->instrument?->type?->name ?? '')) === 'STRAIGHTNESS') {
+            DB::transaction(function () use ($request, $test) {
+                $test = CalibrationTest::lockForUpdate()->findOrFail($test->id);
+                $this->saveStraightness($request, $test);
+            });
+
+            return redirect()->route('tests.show', $test)->with('flash', ['success' => 'Pengujian berhasil diperbarui.']);
+        }
+
         $data = $request->validate([
             'test_date' => ['required', 'date', 'before_or_equal:today'],
             'status' => ['nullable', 'in:OK,NG,SPARE,NA,SERVICE'],
@@ -393,6 +413,77 @@ class TestController extends Controller
         });
 
         return redirect()->route('tests.show', $test)->with('flash', ['success' => 'Pengujian berhasil diperbarui.']);
+    }
+
+    private function normalizeStraightnessValue(string $value): string
+    {
+        return mb_strtoupper(trim(preg_replace('/\s+/u', ' ', $value)));
+    }
+
+    private function saveStraightness(Request $request, CalibrationTest $test): CalibrationTest
+    {
+        $checks = $request->input('straightness_checks');
+        if (is_array($checks)) {
+            $checks = array_map(fn ($value) => is_string($value) ? $this->normalizeStraightnessValue($value) : $value, $checks);
+        }
+        $data = Validator::make([
+            ...$request->only(['test_date', 'selected_status', 'notes']),
+            'straightness_checks' => $checks,
+        ], [
+            'test_date' => ['required', 'date', 'before_or_equal:today'],
+            'selected_status' => ['required', 'in:OK,NG'],
+            'notes' => ['nullable', 'string'],
+            'straightness_checks' => ['required', 'array:dudukan,tiang_kelurusan,titik_tengah'],
+            'straightness_checks.dudukan' => ['required', 'string', 'max:255'],
+            'straightness_checks.tiang_kelurusan' => ['required', 'string', 'max:255'],
+            'straightness_checks.titik_tengah' => ['required', 'string', 'max:255'],
+        ])->validate();
+
+        $testDate = Carbon::parse($data['test_date']);
+        $test->fill([
+            'test_date' => $testDate->toDateString(),
+            'next_test_date' => $testDate->copy()->addMonth()->toDateString(),
+            'status' => $data['selected_status'],
+            'selected_status' => $data['selected_status'],
+            'straightness_checks' => $data['straightness_checks'],
+            'computed_status' => null,
+            'avg_correction' => null,
+            'min_correction_snapshot' => null,
+            'max_correction_snapshot' => null,
+            'selected_group_id' => null,
+            'selected_group_name' => null,
+            'selected_group_reference_media' => null,
+            'selected_group_order' => null,
+            'reported_correction' => null,
+            'reported_acceptable_limit' => null,
+            'notes' => $data['notes'] ?? null,
+        ])->save();
+        $test->items()->delete();
+        $test->dimensionChecks()->delete();
+
+        return $test;
+    }
+
+    private function straightnessSuggestions(): array
+    {
+        $suggestions = ['dudukan' => [], 'tiang_kelurusan' => [], 'titik_tengah' => []];
+        foreach (CalibrationTest::whereNotNull('straightness_checks')->whereHas('instrument')->orderByDesc('id')->cursor() as $test) {
+            foreach ($suggestions as $field => $values) {
+                $value = $test->straightness_checks[$field] ?? null;
+                if (! is_string($value) || count($values) >= 20) {
+                    continue;
+                }
+                $value = $this->normalizeStraightnessValue($value);
+                if ($value !== '' && ! in_array($value, $values, true)) {
+                    $suggestions[$field][] = $value;
+                }
+            }
+            if (count($suggestions['dudukan']) === 20 && count($suggestions['tiang_kelurusan']) === 20 && count($suggestions['titik_tengah']) === 20) {
+                break;
+            }
+        }
+
+        return $suggestions;
     }
 
     public function destroy(CalibrationTest $test)

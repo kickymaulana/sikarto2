@@ -15,7 +15,8 @@ class ReportController extends Controller
     public function internalKalibrasi(Request $request)
     {
         $filters = $this->internalKalibrasiFilters($request);
-        $tests = $this->internalKalibrasiRows($filters);
+        $mode = $this->internalKalibrasiMode($filters);
+        $tests = $this->internalKalibrasiRows($filters, $mode);
 
         return Inertia::render('Laporan/InternalKalibrasi', [
             'year' => $filters['year'],
@@ -24,6 +25,7 @@ class ReportController extends Controller
             'typeId' => $filters['type_id'],
             'dateFrom' => $filters['date_from'],
             'dateTo' => $filters['date_to'],
+            'mode' => $mode,
             'factories' => Factory::orderBy('name')->get(['id', 'name']),
             'types' => InstrumentType::orderBy('name')->get(['id', 'name']),
             'tests' => $tests,
@@ -35,7 +37,9 @@ class ReportController extends Controller
         $filters = $this->internalKalibrasiFilters($request);
         $fileName = 'Internal_Kalibrasi_Record_'.$filters['year'].($filters['month'] ? '_'.str_pad((string) $filters['month'], 2, '0', STR_PAD_LEFT) : '').($filters['date_from'] ? '_from_'.$filters['date_from'] : '').($filters['date_to'] ? '_to_'.$filters['date_to'] : '').'.xlsx';
 
-        return Excel::download(new InternalKalibrasiExport($this->internalKalibrasiRows($filters)->all()), $fileName);
+        $mode = $this->internalKalibrasiMode($filters);
+
+        return Excel::download(new InternalKalibrasiExport($this->internalKalibrasiRows($filters, $mode)->all(), $mode), $fileName);
     }
 
     private function internalKalibrasiFilters(Request $request): array
@@ -59,7 +63,18 @@ class ReportController extends Controller
         ];
     }
 
-    private function internalKalibrasiRows(array $filters)
+    private function internalKalibrasiMode(array $filters): string
+    {
+        if (! $filters['type_id']) {
+            return 'default';
+        }
+
+        $typeName = InstrumentType::whereKey($filters['type_id'])->value('name');
+
+        return mb_strtoupper(trim((string) $typeName)) === 'STRAIGHTNESS' ? 'straightness' : 'default';
+    }
+
+    private function internalKalibrasiRows(array $filters, string $mode = 'default')
     {
         $query = CalibrationTest::with([
             'instrument.department',
@@ -90,20 +105,33 @@ class ReportController extends Controller
             $query->whereHas('instrument', fn ($q) => $q->where('instrument_type_id', $filters['type_id']));
         }
 
-        return $query->get()->map(fn (CalibrationTest $test) => [
-            'id' => $test->id,
-            'code' => $test->instrument?->code,
-            'location' => $test->instrument?->department?->name,
-            'type' => $test->instrument?->type?->name,
-            'brand' => $test->instrument?->brand?->name,
-            'capacity' => $test->instrument?->capacity?->name,
-            'avg_correction' => $this->formatCorrection($test),
-            'acceptable_limit' => $this->acceptableLimit($test),
-            'test_date' => $test->test_date?->format('d M Y'),
-            'status' => $test->status,
-            'next_test_date' => $test->next_test_date?->format('d M Y'),
-            'tester' => $test->tester?->name,
-        ])->values();
+        return $query->get()->map(function (CalibrationTest $test) use ($mode) {
+            $row = [
+                'id' => $test->id,
+                'code' => $test->instrument?->code,
+                'location' => $test->instrument?->department?->name,
+                'type' => $test->instrument?->type?->name,
+                'brand' => $test->instrument?->brand?->name,
+                'capacity' => $test->instrument?->capacity?->name,
+                'avg_correction' => $this->formatCorrection($test),
+                'acceptable_limit' => $this->acceptableLimit($test),
+                'test_date' => $test->test_date?->format('d M Y'),
+                'status' => $test->status,
+                'next_test_date' => $test->next_test_date?->format('d M Y'),
+                'tester' => $test->tester?->name,
+            ];
+
+            if ($mode === 'straightness') {
+                $checks = $test->straightness_checks ?? [];
+                $row['dudukan'] = $checks['dudukan'] ?? null;
+                $row['tiang_kelurusan'] = $checks['tiang_kelurusan'] ?? null;
+                $row['titik_tengah'] = $checks['titik_tengah'] ?? null;
+                $row['test_date'] = $test->test_date?->locale('id')->translatedFormat('d F Y');
+                $row['next_test_date'] = $test->next_test_date?->locale('id')->translatedFormat('d F Y');
+            }
+
+            return $row;
+        })->values();
 
     }
 
