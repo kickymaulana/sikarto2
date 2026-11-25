@@ -152,6 +152,73 @@ class CalibrationTestTest extends TestCase
         $this->assertEquals(25.7, $test->dimensionChecks()->where('dimension', 'width')->first()->min_value);
     }
 
+    public function test_type_18_accepts_text_diameter_without_affecting_status_and_updates_dimensions(): void
+    {
+        while (InstrumentType::count() < 17) {
+            InstrumentType::create(['name' => 'Type '.(InstrumentType::count() + 1)]);
+        }
+        $type18 = InstrumentType::create(['name' => 'Caliper']);
+        $instrument = $this->makeInstrument();
+        $instrument->update(['instrument_type_id' => $type18->id]);
+        $specification = Specification::create([
+            'name' => 'Tapak Holder', 'length_min' => 10, 'length_max' => 20,
+            'width_min' => 5, 'width_max' => 10, 'diameter_min' => 79, 'diameter_max' => 80,
+            'dimension_unit' => 'mm',
+        ]);
+        $instrument->update(['specification_id' => $specification->id]);
+        $user = $this->inspector();
+        $templates = StandardTemplate::all();
+        $payload = [
+            'instrument_id' => $instrument->id,
+            'test_date' => '2026-08-01',
+            'items' => $templates->map(fn ($point) => ['standard_template_id' => $point->id, 'reading_value' => $point->standard_value])->all(),
+            'dimension_checks' => [
+                ['dimension' => 'length', 'measured_value' => '12'],
+                ['dimension' => 'width', 'measured_value' => '6'],
+                ['dimension' => 'diameter', 'measured_value_text' => '79.99-80.00'],
+            ],
+        ];
+
+        $this->actingAs($user)->post('/tests', $payload)->assertSessionHasNoErrors();
+        $test = CalibrationTest::firstOrFail();
+        $this->assertSame('OK', $test->status);
+        $this->assertSame('OK', $test->computed_status);
+        $this->assertSame('79.99-80.00', $test->dimensionChecks->firstWhere('dimension', 'diameter')->measured_value_text);
+        $this->assertNull($test->dimensionChecks->firstWhere('dimension', 'diameter')->is_within_range);
+
+        $payload = [
+            'test_date' => '2026-08-02',
+            'status' => 'NG',
+            'items' => $test->items->map(fn ($item) => ['id' => $item->id, 'reading_value' => $item->standard_value])->all(),
+            'dimension_checks' => $test->dimensionChecks->map(fn ($check) => [
+                'id' => $check->id,
+                'measured_value' => $check->dimension === 'length' ? '13' : ($check->dimension === 'width' ? '7' : null),
+                'measured_value_text' => $check->dimension === 'diameter' ? 'arbitrary text; no scoring' : null,
+            ])->all(),
+        ];
+        $this->put('/tests/'.$test->id, $payload)->assertSessionHasNoErrors();
+        $test->refresh();
+        $this->assertSame('NG', $test->status);
+        $this->assertSame('OK', $test->computed_status);
+        $this->assertSame('arbitrary text; no scoring', $test->dimensionChecks->firstWhere('dimension', 'diameter')->measured_value_text);
+        $this->assertSame('13.00', number_format((float) $test->dimensionChecks->firstWhere('dimension', 'length')->measured_value, 2, '.', ''));
+    }
+
+    public function test_text_diameter_is_rejected_for_other_instrument_types(): void
+    {
+        $instrument = $this->makeInstrument();
+        $specification = Specification::create(['name' => 'Dimension', 'diameter_min' => 1, 'diameter_max' => 2, 'dimension_unit' => 'mm']);
+        $instrument->update(['specification_id' => $specification->id]);
+        $templates = StandardTemplate::all();
+
+        $this->actingAs($this->inspector())->post('/tests', [
+            'instrument_id' => $instrument->id, 'test_date' => '2026-08-01',
+            'items' => $templates->map(fn ($point) => ['standard_template_id' => $point->id, 'reading_value' => $point->standard_value])->all(),
+            'dimension_checks' => [['dimension' => 'diameter', 'measured_value_text' => '79.99-80.00']],
+        ])->assertSessionHasErrors('dimension_checks.0.measured_value');
+        $this->assertDatabaseCount('calibration_tests', 0);
+    }
+
     public function test_dimension_checks_must_match_specification(): void
     {
         $instrument = $this->makeInstrument();

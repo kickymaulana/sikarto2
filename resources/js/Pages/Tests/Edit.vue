@@ -8,7 +8,7 @@ defineOptions({ layout: AppLayout });
 
 type Item = { id: number; standard_value: number | string; reading_value: number | string };
 type Group = { id: number; name: string; reference_media: string };
-type Dimension = { id: number; dimension: string; label: string; min_value: number | string; max_value: number | string; measured_value: number | string; unit: string };
+type Dimension = { id: number; dimension: string; label: string; min_value: number | string; max_value: number | string; measured_value: number | string | null; measured_value_text: string | null; unit: string };
 type StraightnessKey = 'dudukan' | 'tiang_kelurusan' | 'titik_tengah';
 type StraightnessChecks = Record<StraightnessKey, string>;
 const straightnessFields: Array<{ key: StraightnessKey; label: string }> = [
@@ -16,8 +16,9 @@ const straightnessFields: Array<{ key: StraightnessKey; label: string }> = [
     { key: 'tiang_kelurusan', label: 'Tiang / Kelurusan' },
     { key: 'titik_tengah', label: 'Titik Tengah' },
 ];
-const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; reported_correction: string | null; reported_acceptable_limit: string | null; notes: string | null; items: Item[]; dimension_checks: Dimension[]; straightness_checks: StraightnessChecks | null; instrument?: { type?: { name: string } | null } | null }; groups: Group[]; straightnessSuggestions: Record<StraightnessKey, string[]> }>();
+const props = defineProps<{ test: { id: number; test_date: string; status: string; selected_status: string | null; selected_group_id: number | null; reported_correction: string | null; reported_acceptable_limit: string | null; notes: string | null; items: Item[]; dimension_checks: Dimension[]; straightness_checks: StraightnessChecks | null; instrument?: { instrument_type_id: number; type?: { name: string } | null } | null }; groups: Group[]; straightnessSuggestions: Record<StraightnessKey, string[]> }>();
 const isStraightness = computed(() => props.test.straightness_checks != null || props.test.instrument?.type?.name.trim().toUpperCase() === 'STRAIGHTNESS');
+const isType18 = computed(() => props.test.instrument?.instrument_type_id === 18);
 const straightnessChecks = reactive<StraightnessChecks>({
     dudukan: props.test.straightness_checks?.dudukan ?? '',
     tiang_kelurusan: props.test.straightness_checks?.tiang_kelurusan ?? '',
@@ -32,11 +33,18 @@ const form = reactive({
     reported_acceptable_limit: props.test.reported_acceptable_limit ?? '',
     notes: props.test.notes ?? '',
     items: props.test.items.map((item) => ({ id: item.id, standard_value: item.standard_value, reading_value: String(item.reading_value) })),
-    dimension_checks: props.test.dimension_checks.map((item) => ({ id: item.id, dimension: item.dimension, label: item.label, min_value: item.min_value, max_value: item.max_value, measured_value: String(item.measured_value), unit: item.unit })),
+    dimension_checks: props.test.dimension_checks.map((item) => ({ id: item.id, dimension: item.dimension, label: item.label, min_value: item.min_value, max_value: item.max_value, measured_value: isType18.value && item.dimension === 'diameter' && item.measured_value_text == null && item.measured_value != null ? Number(item.measured_value).toFixed(2) : String(item.measured_value_text ?? item.measured_value ?? ''), unit: item.unit })),
 });
 const saving = ref(false);
 const errors = ref<Record<string, string>>({});
 const isManual = computed(() => ['SPARE', 'NA', 'SERVICE'].includes(form.status));
+const isTextDiameter = (item: { dimension: string }) => isType18.value && item.dimension === 'diameter';
+const formatDimension = (item: { dimension: string; measured_value: string }) => {
+    if (!isType18.value || !['length', 'width', 'diameter'].includes(item.dimension)) return;
+    const value = item.measured_value.trim();
+    if (value !== '' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) && Math.abs(Number(value)) <= 99999999.99) item.measured_value = Number(value).toFixed(2);
+};
+const displayDimension = (value: number | string) => isType18.value ? Number(value).toFixed(2) : value;
 const straightnessReady = computed(() => ['OK', 'NG'].includes(form.status) && straightnessFields.every(({ key }) => !!straightnessChecks[key].trim()));
 const submit = () => {
     if (saving.value || (isStraightness.value && !straightnessReady.value)) return;
@@ -54,7 +62,7 @@ const submit = () => {
             reported_correction: form.reported_correction.trim() || null,
             reported_acceptable_limit: form.reported_acceptable_limit.trim() || null,
             items: isManual.value ? [] : form.items.map((item) => ({ id: item.id, reading_value: item.reading_value.trim() })),
-            dimension_checks: isManual.value ? [] : form.dimension_checks.map((item) => ({ id: item.id, measured_value: item.measured_value.trim() })),
+            dimension_checks: isManual.value ? [] : form.dimension_checks.map((item) => ({ id: item.id, ...(isType18.value && item.dimension === 'diameter' ? { measured_value_text: item.measured_value.trim() } : { measured_value: item.measured_value.trim() }) })),
         }),
     }, {
         onError: (messages) => { errors.value = messages; },
@@ -110,9 +118,10 @@ const submit = () => {
         </div>
         <div v-if="!isStraightness && !isManual && form.dimension_checks.length" class="white-card">
             <h3 class="card-title">Pemeriksaan Ukuran</h3>
-            <div v-for="item in form.dimension_checks" :key="item.id" class="item-row">
-                <label :for="`dimension-${item.id}`">{{ item.label }} ({{ item.min_value }} s/d {{ item.max_value }} {{ item.unit }})</label>
-                <input :id="`dimension-${item.id}`" v-model="item.measured_value" type="text" inputmode="decimal" :disabled="saving" />
+            <div v-for="(item, index) in form.dimension_checks" :key="item.id" class="item-row">
+                <label :for="`dimension-${item.id}`">{{ item.label }}{{ isTextDiameter(item) ? ' (catatan tanpa evaluasi)' : ` (${isType18 && ['length', 'width'].includes(item.dimension) ? displayDimension(item.min_value) : item.min_value} s/d ${isType18 && ['length', 'width'].includes(item.dimension) ? displayDimension(item.max_value) : item.max_value} ${item.unit})` }}</label>
+                <input :id="`dimension-${item.id}`" v-model="item.measured_value" type="text" :inputmode="isTextDiameter(item) ? undefined : 'decimal'" :maxlength="isTextDiameter(item) ? 255 : undefined" :disabled="saving" @blur="formatDimension(item)" />
+                <p v-if="errors[`dimension_checks.${index}.measured_value`] || errors[`dimension_checks.${index}.measured_value_text`] || errors.dimension_checks" class="error-list">{{ errors[`dimension_checks.${index}.measured_value`] || errors[`dimension_checks.${index}.measured_value_text`] || errors.dimension_checks }}</p>
             </div>
         </div>
         <div class="white-card">

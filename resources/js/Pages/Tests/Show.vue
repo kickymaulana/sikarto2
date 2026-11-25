@@ -7,6 +7,9 @@ import AppLayout from '../../Layouts/AppLayout.vue';
 defineOptions({ layout: AppLayout });
 const page=usePage(); const can=(permission:string)=>!!page.props.auth?.user?.permissions.includes(permission); const props=defineProps<{test:any}>(); const confirmDelete=ref(false); const deleteTest=()=>{confirmDelete.value=true;}; const proceedDelete=()=>{confirmDelete.value=false;router.delete(route('tests.destroy',props.test.id));}; type SnapshotItem={id:number;standard_value:number|string;reading_value:number|string;correction:number|string;is_within_limit:boolean|null;group_order:number|null;group_name:string|null;reference_media:string|null;unit:string|null;point_order:number|null}; const snapshotGroups=computed(()=>{const groups=new Map<number,{order:number;name:string|null;media:string|null;items:SnapshotItem[]}>();for(const item of props.test.items as SnapshotItem[]){if(item.group_order==null)continue;if(!groups.has(item.group_order))groups.set(item.group_order,{order:item.group_order,name:item.group_name,media:item.reference_media,items:[]});groups.get(item.group_order)!.items.push(item)}return [...groups.values()].sort((a,b)=>a.order-b.order).map(group=>({...group,items:[...group.items].sort((a,b)=>(a.point_order??Infinity)-(b.point_order??Infinity))}))}); const groupAverage=(items:SnapshotItem[])=>{if(!items.length)return null;const sum=items.reduce((total,item)=>total+BigInt(Math.round(Number(item.correction)*10000)),0n);const count=BigInt(items.length);const absolute=sum<0n?-sum:sum;const rounded=absolute/count+((absolute%count)*2n>=count?1n:0n);return Number(sum<0n?-rounded:rounded)/10000}; const legacyItems=computed(()=> (props.test.items as SnapshotItem[]).filter(item=>item.group_order==null)); const snapshotUnit=computed(()=>{const units=[...new Set((props.test.items as SnapshotItem[]).map(item=>item.unit))];return units.length===1?units[0]:null}); const hasToleranceSnapshot=computed(()=>props.test.min_correction_snapshot!=null&&props.test.max_correction_snapshot!=null); const statusClass=(status:string)=>({OK:'bg-emerald-500',NG:'bg-red-500',SPARE:'bg-blue-500',SERVICE:'bg-amber-500',NA:'bg-slate-500'}[status]??'bg-slate-500');
 const isStraightness = computed(() => props.test.straightness_checks != null || props.test.instrument?.type?.name?.trim().toUpperCase() === 'STRAIGHTNESS');
+const isType18 = computed(() => props.test.instrument?.instrument_type_id === 18);
+const isTextDiameter = (check: any) => isType18.value && check.dimension === 'diameter';
+const effectiveDimensionValue = (check: any) => check.measured_value_text ?? (isType18.value && ['length', 'width', 'diameter'].includes(check.dimension) && check.measured_value != null ? Number(check.measured_value).toFixed(2) : check.measured_value);
 const straightnessFields = [
     { key: 'dudukan', label: 'Dudukan' },
     { key: 'tiang_kelurusan', label: 'Tiang / Kelurusan' },
@@ -109,8 +112,9 @@ const straightnessFields = [
 <div v-if="!isStraightness && test.dimension_checks.length>0" class="info-card">
 <h3 class="card-title">Hasil Pemeriksaan Ukuran</h3>
 <div v-for="check in test.dimension_checks" :key="check.id" class="info-row">
-<span>{{ check.label }} ({{ check.min_value }} s/d {{ check.max_value }} {{ check.unit }})</span>
-<span>{{ check.measured_value }} {{ check.unit }} <span class="badge" :class="check.is_within_range?'ok':'ng'">{{ check.is_within_range?'OK':'NG' }}</span>
+<span>{{ check.label }}<template v-if="!isTextDiameter(check)"> ({{ isType18 && ['length', 'width'].includes(check.dimension) ? Number(check.min_value).toFixed(2) : check.min_value }} s/d {{ isType18 && ['length', 'width'].includes(check.dimension) ? Number(check.max_value).toFixed(2) : check.max_value }} {{ check.unit }})</template><template v-else> (catatan tanpa evaluasi)</template></span>
+<span v-if="isTextDiameter(check)">{{ effectiveDimensionValue(check) ?? '—' }}</span>
+<span v-else>{{ effectiveDimensionValue(check) }} {{ check.unit }} <span class="badge" :class="check.is_within_range?'ok':'ng'">{{ check.is_within_range?'OK':'NG' }}</span>
 </span>
 </div>
 <p class="note">Hasil ukuran tidak mengubah status pengujian.</p>

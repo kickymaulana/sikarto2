@@ -4,17 +4,43 @@ namespace App\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithColumnFormatting;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
 use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Events\AfterSheet;
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 
-class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, WithHeadings
+class InternalKalibrasiExport extends DefaultValueBinder implements FromArray, ShouldAutoSize, WithColumnFormatting, WithCustomValueBinder, WithEvents, WithHeadings
 {
     public function __construct(private readonly array $rows, private readonly string $mode = 'default') {}
+
+    public function bindValue(Cell $cell, mixed $value): bool
+    {
+        if ($this->mode === 'type_18' && $cell->getColumn() === 'F' && $cell->getRow() > 1 && is_string($value)) {
+            $cell->setValueExplicit($value, DataType::TYPE_STRING);
+
+            return true;
+        }
+
+        return parent::bindValue($cell, $value);
+    }
+
+    public function columnFormats(): array
+    {
+        return $this->mode === 'type_18' ? [
+            'D' => NumberFormat::FORMAT_NUMBER_00,
+            'E' => NumberFormat::FORMAT_NUMBER_00,
+            'F' => NumberFormat::FORMAT_NUMBER_00,
+        ] : [];
+    }
 
     public function headings(): array
     {
@@ -48,7 +74,7 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
                 $row['location'] ?? '—',
                 ($row['length'] ?? null) === null ? '—' : $row['length'],
                 ($row['width'] ?? null) === null ? '—' : $row['width'],
-                ($row['diameter'] ?? null) === null ? '—' : $row['diameter'],
+                ($row['diameter'] ?? null) === null ? '—' : (is_string($row['diameter']) && preg_match('/^[=+@\\-]/', $row['diameter']) ? "'".$row['diameter'] : $row['diameter']),
                 $row['specification'] ?? '—',
                 $row['test_date'] ?? '—',
                 'PERBULAN',

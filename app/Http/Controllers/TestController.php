@@ -89,6 +89,7 @@ class TestController extends Controller
 
         return [
             'id' => $instrument->id,
+            'instrument_type_id' => $instrument->instrument_type_id,
             'code' => $instrument->code,
             'factory' => $instrument->factory ? ['name' => $instrument->factory->name] : null,
             'department' => $instrument->department ? ['name' => $instrument->department->name] : null,
@@ -151,11 +152,14 @@ class TestController extends Controller
                 'items.*.standard_template_id' => 'required|integer|distinct',
                 'items.*.reading_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
             ])['items'] ?? [];
-            $dimensionChecks = $isManual ? [] : $request->validate([
+            $isType18 = (int) $instrument->instrument_type_id === 18;
+            $dimensionRules = [
                 'dimension_checks' => 'nullable|array',
                 'dimension_checks.*.dimension' => 'required|string|distinct|in:length,width,diameter',
-                'dimension_checks.*.measured_value' => 'required|numeric|decimal:0,4|between:-99999999.9999,99999999.9999',
-            ])['dimension_checks'] ?? [];
+                'dimension_checks.*.measured_value' => 'nullable',
+                'dimension_checks.*.measured_value_text' => 'nullable',
+            ];
+            $dimensionChecks = $isManual ? [] : $request->validate($dimensionRules)['dimension_checks'] ?? [];
 
             $limit = $instrument->acceptableLimit;
             $computedStatus = null;
@@ -246,15 +250,18 @@ class TestController extends Controller
                 $measurements = collect($dimensionChecks)->keyBy('dimension');
                 foreach ($dimensions as $dimensionKey => $dimension) {
                     $key = $dimensions->keys()->search($dimensionKey);
-                    $measured = $measurements[$dimensionKey]['measured_value'];
+                    $isTextDiameter = $isType18 && $dimensionKey === 'diameter';
+                    $inputIndex = collect($dimensionChecks)->search(fn ($check) => $check['dimension'] === $dimensionKey);
+                    $measured = $this->dimensionValue($measurements[$dimensionKey], $isTextDiameter, $inputIndex);
                     $testDimensionChecks[] = [
                         'dimension' => $dimensionKey,
                         'label' => $dimension['label'],
                         'min_value' => $dimension['min'],
                         'max_value' => $dimension['max'],
-                        'measured_value' => $measured,
+                        'measured_value' => $isTextDiameter ? null : $measured,
+                        'measured_value_text' => $isTextDiameter ? $measured : null,
                         'unit' => $instrument->specification->dimension_unit,
-                        'is_within_range' => (float) $measured >= (float) $dimension['min'] && (float) $measured <= (float) $dimension['max'],
+                        'is_within_range' => $isTextDiameter ? null : (float) $measured >= (float) $dimension['min'] && (float) $measured <= (float) $dimension['max'],
                         'sort_order' => $key,
                     ];
                 }
@@ -328,11 +335,13 @@ class TestController extends Controller
             'items.*.reading_value' => ['required', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
             'dimension_checks' => ['nullable', 'array'],
             'dimension_checks.*.id' => ['required', 'integer', 'distinct'],
-            'dimension_checks.*.measured_value' => ['required', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'],
+            'dimension_checks.*.measured_value' => ['nullable'],
+            'dimension_checks.*.measured_value_text' => ['nullable'],
         ]);
 
         DB::transaction(function () use ($data, $test) {
-            $test->load(['instrument.capacity.groups', 'items', 'dimensionChecks']);
+            $test->load(['instrument.capacity.groups', 'instrument.type', 'items', 'dimensionChecks']);
+            $isType18 = (int) $test->instrument?->instrument_type_id === 18;
             $selectedStatus = $data['status'] ?? null;
             $isManual = in_array($selectedStatus, ['SPARE', 'NA', 'SERVICE'], true);
             $submittedItems = collect($data['items'] ?? [])->keyBy('id');
@@ -381,15 +390,18 @@ class TestController extends Controller
                 }
             }
 
-            if (! $isManual && $test->dimensionChecks->isNotEmpty()) {
+            if (! $isManual) {
                 if ($submittedDimensions->keys()->sort()->values()->all() !== $test->dimensionChecks->pluck('id')->sort()->values()->all()) {
                     throw ValidationException::withMessages(['dimension_checks' => 'Data pemeriksaan ukuran tidak lengkap atau tidak valid.']);
                 }
                 foreach ($test->dimensionChecks as $dimension) {
-                    $measured = $submittedDimensions[$dimension->id]['measured_value'];
+                    $isTextDiameter = $isType18 && $dimension->dimension === 'diameter';
+                    $inputIndex = array_search($dimension->id, array_column($data['dimension_checks'] ?? [], 'id'));
+                    $value = $this->dimensionValue($submittedDimensions[$dimension->id], $isTextDiameter, $inputIndex === false ? $dimension->sort_order : $inputIndex);
                     $dimension->update([
-                        'measured_value' => $measured,
-                        'is_within_range' => (float) $measured >= (float) $dimension->min_value && (float) $measured <= (float) $dimension->max_value,
+                        'measured_value' => $isTextDiameter ? null : $value,
+                        'measured_value_text' => $isTextDiameter ? $value : null,
+                        'is_within_range' => $isTextDiameter ? null : (float) $value >= (float) $dimension->min_value && (float) $value <= (float) $dimension->max_value,
                     ]);
                 }
             }
@@ -413,6 +425,20 @@ class TestController extends Controller
         });
 
         return redirect()->route('tests.show', $test)->with('flash', ['success' => 'Pengujian berhasil diperbarui.']);
+    }
+
+    private function dimensionValue(array $input, bool $text, int|string $index): string
+    {
+        $field = $text ? 'measured_value_text' : 'measured_value';
+        $key = "dimension_checks.$index.$field";
+        $value = $input[$field] ?? ($text ? ($input['measured_value'] ?? null) : null);
+        $rules = $text ? ['required', 'string', 'max:255'] : ['required', 'numeric', 'decimal:0,4', 'between:-99999999.9999,99999999.9999'];
+        Validator::make(['dimension_checks' => [$index => [$field => $value]]], ["dimension_checks.$index.$field" => $rules], [
+            "$key.required" => $text ? 'Isi catatan diameter.' : 'Isi ukuran.',
+            "$key.string" => 'Catatan diameter harus berupa teks.',
+        ])->validateWithBag('default');
+
+        return $text ? trim($value) : (string) $value;
     }
 
     private function normalizeStraightnessValue(string $value): string

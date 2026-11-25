@@ -8,7 +8,7 @@ class CalibrationTestDimensionCheck extends Model
 {
     protected $fillable = [
         'calibration_test_id', 'dimension', 'label', 'min_value', 'max_value',
-        'measured_value', 'unit', 'is_within_range', 'sort_order',
+        'measured_value', 'measured_value_text', 'unit', 'is_within_range', 'sort_order',
     ];
 
     protected function casts(): array
