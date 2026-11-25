@@ -6,11 +6,13 @@ use App\Exports\InternalKalibrasiExport;
 use App\Models\AcceptableLimit;
 use App\Models\Brand;
 use App\Models\CalibrationTest;
+use App\Models\CalibrationTestDimensionCheck;
 use App\Models\Capacity;
 use App\Models\Department;
 use App\Models\Factory;
 use App\Models\Instrument;
 use App\Models\InstrumentType;
+use App\Models\Specification;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -73,6 +75,78 @@ class StraightnessReportTest extends TestCase
         $response = $this->actingAs($this->user)->get('/laporan/internal-kalibrasi?year=2026&'.$query);
 
         return $response->original?->getData()['page']['props']['tests'] ?? [];
+    }
+
+    public function test_type_18_mode_lists_instruments_and_uses_latest_dimensions_and_specification(): void
+    {
+        while (InstrumentType::count() < 17) {
+            InstrumentType::create(['name' => 'Type '.(InstrumentType::count() + 1)]);
+        }
+        $type = InstrumentType::create(['name' => 'Caliper']);
+        $test = $this->makeTest($type);
+        $specification = Specification::create(['name' => 'KINGFA D MINIMUM']);
+        $test->instrument->update(['specification_id' => $specification->id]);
+        foreach ([
+            ['dimension' => 'length', 'label' => 'Panjang', 'measured_value' => 4.25, 'sort_order' => 1],
+            ['dimension' => 'width', 'label' => 'Lebar', 'measured_value' => 2.5, 'sort_order' => 2],
+            ['dimension' => 'diameter', 'label' => 'Diameter', 'measured_value' => 3, 'sort_order' => 3],
+        ] as $check) {
+            CalibrationTestDimensionCheck::create([
+                'calibration_test_id' => $test->id,
+                'min_value' => 0,
+                'max_value' => 10,
+                'unit' => 'mm',
+                'is_within_range' => true,
+                ...$check,
+            ]);
+        }
+        $withoutTest = Instrument::create([
+            'code' => 'PR.KD.9',
+            'factory_id' => $test->instrument->factory_id,
+            'department_id' => $test->instrument->department_id,
+            'instrument_type_id' => $type->id,
+            'brand_id' => $test->instrument->brand_id,
+            'capacity_id' => $test->instrument->capacity_id,
+            'acceptable_limit_id' => $test->instrument->acceptable_limit_id,
+            'specification_id' => $specification->id,
+        ]);
+
+        $response = $this->actingAs($this->user)->get('/laporan/internal-kalibrasi?year=2026&type_id=18');
+        $response->assertOk();
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('mode', 'type_18')
+            ->has('tests', 2)
+            ->where('tests.0.code', 'PR.KD.9')
+            ->where('tests.0.length', null)
+            ->where('tests.0.test_date', null)
+            ->where('tests.1.code', $test->instrument->code)
+            ->where('tests.1.length', 4.25)
+            ->where('tests.1.width', 2.5)
+            ->where('tests.1.diameter', 3)
+            ->where('tests.1.specification', 'KINGFA D MINIMUM')
+            ->where('tests.1.test_date', '14 Oktober 2026')
+            ->where('tests.1.status', 'OK')
+            ->where('tests.1.next_test_date', '14 November 2026')
+            ->where('tests.1.tester', 'Kalibrator'));
+
+        $this->assertDatabaseHas('instruments', ['id' => $withoutTest->id]);
+    }
+
+    public function test_type_18_export_has_expected_columns_and_dash_for_missing_values(): void
+    {
+        $export = new InternalKalibrasiExport([[
+            'code' => 'PR.KD.8',
+            'location' => 'QA. PRESHIPMENT',
+            'specification' => 'KINGFA D MINIMUM',
+        ]], 'type_18');
+
+        $this->assertSame([
+            'NO', 'KODE', 'LOKASI', "PANJANG TAPAK\n(mm)", "LEBAR TAPAK\n(mm)", "DIAMETER\n(mm)",
+            'SPESIFIKASI', 'TANGGAL KALIBRASI', 'FREK. KALIBRASI', 'HASIL KALIBRASI', 'DUE DATE', 'KALIBRATOR',
+        ], $export->headings());
+        $this->assertSame([
+            51, 'PR.KD.8', 'QA. PRESHIPMENT', '—', '—', '—', 'KINGFA D MINIMUM', '—', 'PERBULAN', '—', '—', '—',
+        ], $export->array()[0]);
     }
 
     public function test_special_mode_requires_selected_trimmed_uppercase_straightness_type(): void

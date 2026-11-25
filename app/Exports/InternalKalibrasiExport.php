@@ -18,6 +18,13 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
 
     public function headings(): array
     {
+        if ($this->mode === 'type_18') {
+            return [
+                'NO', 'KODE', 'LOKASI', "PANJANG TAPAK\n(mm)", "LEBAR TAPAK\n(mm)", "DIAMETER\n(mm)",
+                'SPESIFIKASI', 'TANGGAL KALIBRASI', 'FREK. KALIBRASI', 'HASIL KALIBRASI', 'DUE DATE', 'KALIBRATOR',
+            ];
+        }
+
         if ($this->mode === 'straightness') {
             return [
                 'NO.', 'KODE', 'LOKASI', 'DUDUKAN', 'TIANG KELURUSAN', 'TITIK TENGAH',
@@ -34,6 +41,23 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
 
     public function array(): array
     {
+        if ($this->mode === 'type_18') {
+            return array_map(fn (array $row, int $index) => [
+                $index + 51,
+                $row['code'] ?? '—',
+                $row['location'] ?? '—',
+                ($row['length'] ?? null) === null ? '—' : $row['length'],
+                ($row['width'] ?? null) === null ? '—' : $row['width'],
+                ($row['diameter'] ?? null) === null ? '—' : $row['diameter'],
+                $row['specification'] ?? '—',
+                $row['test_date'] ?? '—',
+                'PERBULAN',
+                ($row['status'] ?? null) === 'OK' ? 'ACCEPTED' : (($row['status'] ?? null) === 'NG' ? 'NOT ACCEPTED' : ($row['status'] ?? '—')),
+                $row['next_test_date'] ?? '—',
+                $row['tester'] ?? '—',
+            ], $this->rows, array_keys($this->rows));
+        }
+
         if ($this->mode === 'straightness') {
             return array_map(fn (array $row, int $index) => [
                 $index + 1,
@@ -73,7 +97,7 @@ class InternalKalibrasiExport implements FromArray, ShouldAutoSize, WithEvents, 
             AfterSheet::class => function (AfterSheet $event) {
                 $sheet = $event->sheet->getDelegate();
                 $lastRow = count($this->rows) + 1;
-                $lastColumn = $this->mode === 'straightness' ? 'K' : 'M';
+                $lastColumn = $this->mode === 'type_18' ? 'L' : ($this->mode === 'straightness' ? 'K' : 'M');
 
                 $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
                 $sheet->getPageSetup()->setPaperSize(PageSetup::PAPERSIZE_A4);

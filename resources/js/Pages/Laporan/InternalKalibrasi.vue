@@ -14,7 +14,7 @@ const props = defineProps<{
     typeId: number | null;
     dateFrom: string | null;
     dateTo: string | null;
-    mode: 'default' | 'straightness';
+    mode: 'default' | 'straightness' | 'type_18';
     factories: Array<{ id: number; name: string }>;
     types: Array<{ id: number; name: string }>;
     tests: Array<{
@@ -33,6 +33,10 @@ const props = defineProps<{
         dudukan?: string | null;
         tiang_kelurusan?: string | null;
         titik_tengah?: string | null;
+        length?: number | string | null;
+        width?: number | string | null;
+        diameter?: number | string | null;
+        specification?: string | null;
     }>;
 }>();
 
@@ -88,7 +92,10 @@ const statusType = (status: string) => status === 'OK' ? 'success' : status === 
             <div class="table-scroll">
                 <table class="record-table">
                     <thead>
-                        <tr v-if="mode === 'straightness'">
+                        <tr v-if="mode === 'type_18'">
+                            <th>NO</th><th>KODE</th><th>LOKASI</th><th>PANJANG TAPAK<br>(mm)</th><th>LEBAR TAPAK<br>(mm)</th><th>DIAMETER<br>(mm)</th><th>SPESIFIKASI</th><th>TANGGAL KALIBRASI</th><th>FREK. KALIBRASI</th><th>HASIL KALIBRASI</th><th>DUE DATE</th><th>KALIBRATOR</th>
+                        </tr>
+                        <tr v-else-if="mode === 'straightness'">
                             <th>NO.</th><th>KODE</th><th>LOKASI</th><th>DUDUKAN</th><th>TIANG KELURUSAN</th><th>TITIK TENGAH</th><th>TGL KALIBRASI</th><th>FREK KALIBRASI</th><th>HASIL KALIBRASI</th><th>DUE DATE</th><th>KALIBRATOR</th>
                         </tr>
                         <tr v-else>
@@ -97,14 +104,17 @@ const statusType = (status: string) => status === 'OK' ? 'success' : status === 
                     </thead>
                     <tbody>
                         <tr v-for="(test, index) in tests" :key="test.id">
-                            <template v-if="mode === 'straightness'">
+                            <template v-if="mode === 'type_18'">
+                                <td>{{ index + 51 }}</td><td class="code">{{ test.code ?? '—' }}</td><td>{{ test.location ?? '—' }}</td><td>{{ test.length ?? '—' }}</td><td>{{ test.width ?? '—' }}</td><td>{{ test.diameter ?? '—' }}</td><td>{{ test.specification ?? '—' }}</td><td>{{ test.test_date ?? '—' }}</td><td>PERBULAN</td><td><span v-if="test.status" class="status-badge" :class="test.status === 'OK' ? 'ok' : test.status === 'NG' ? 'ng' : 'warning'">{{ test.status === 'OK' ? 'ACCEPTED' : test.status === 'NG' ? 'NOT ACCEPTED' : test.status }}</span><span v-else>—</span></td><td>{{ test.next_test_date ?? '—' }}</td><td>{{ test.tester ?? '—' }}</td>
+                            </template>
+                            <template v-else-if="mode === 'straightness'">
                                 <td>{{ index + 1 }}</td><td class="code">{{ test.code ?? '—' }}</td><td>{{ test.location ?? '—' }}</td><td>{{ test.dudukan ?? '—' }}</td><td>{{ test.tiang_kelurusan ?? '—' }}</td><td>{{ test.titik_tengah ?? '—' }}</td><td>{{ test.test_date ?? '—' }}</td><td>PERBULAN</td><td><span class="status-badge" :class="test.status === 'OK' ? 'ok' : test.status === 'NG' ? 'ng' : 'warning'">{{ statusLabel(test.status) }}</span></td><td>{{ test.next_test_date ?? '—' }}</td><td>{{ test.tester ?? '—' }}</td>
                             </template>
                             <template v-else>
                                 <td class="code">{{ test.code ?? '—' }}</td><td>{{ test.location ?? '—' }}</td><td>{{ test.type ?? '—' }}</td><td>{{ test.brand ?? '—' }}</td><td>{{ test.capacity ?? '—' }}</td><td>{{ test.avg_correction ?? '—' }}</td><td>MDDWI-QA22</td><td>{{ test.acceptable_limit ?? '—' }}</td><td>{{ test.test_date ?? '—' }}</td><td>PER 1 BULAN</td><td><span class="status-badge" :class="test.status === 'OK' ? 'ok' : test.status === 'NG' ? 'ng' : 'warning'">{{ statusLabel(test.status) }}</span></td><td>{{ test.next_test_date ?? '—' }}</td><td>{{ test.tester ?? '—' }}</td>
                             </template>
                         </tr>
-                        <tr v-if="tests.length === 0"><td :colspan="mode === 'straightness' ? 11 : 13" class="empty">Tidak ada data kalibrasi.</td></tr>
+                        <tr v-if="tests.length === 0"><td :colspan="mode === 'type_18' ? 12 : mode === 'straightness' ? 11 : 13" class="empty">Tidak ada data kalibrasi.</td></tr>
                     </tbody>
                 </table>
             </div>

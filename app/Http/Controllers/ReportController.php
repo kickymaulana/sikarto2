@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Exports\InternalKalibrasiExport;
 use App\Models\CalibrationTest;
 use App\Models\Factory;
+use App\Models\Instrument;
 use App\Models\InstrumentType;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -71,11 +72,19 @@ class ReportController extends Controller
 
         $typeName = InstrumentType::whereKey($filters['type_id'])->value('name');
 
+        if ((int) $filters['type_id'] === 18) {
+            return 'type_18';
+        }
+
         return mb_strtoupper(trim((string) $typeName)) === 'STRAIGHTNESS' ? 'straightness' : 'default';
     }
 
     private function internalKalibrasiRows(array $filters, string $mode = 'default')
     {
+        if ($mode === 'type_18') {
+            return $this->type18Rows($filters);
+        }
+
         $query = CalibrationTest::with([
             'instrument.department',
             'instrument.brand',
@@ -133,6 +142,52 @@ class ReportController extends Controller
             return $row;
         })->values();
 
+    }
+
+    private function type18Rows(array $filters)
+    {
+        $instruments = Instrument::with([
+            'department',
+            'specification',
+            'tests' => function ($query) use ($filters) {
+                $query->with(['dimensionChecks', 'tester'])
+                    ->whereYear('test_date', $filters['year'])
+                    ->orderByDesc('test_date')
+                    ->orderByDesc('id');
+
+                if ($filters['month']) {
+                    $query->whereMonth('test_date', $filters['month']);
+                }
+                if ($filters['date_from']) {
+                    $query->whereDate('test_date', '>=', $filters['date_from']);
+                }
+                if ($filters['date_to']) {
+                    $query->whereDate('test_date', '<=', $filters['date_to']);
+                }
+            },
+        ])->where('instrument_type_id', $filters['type_id'])
+            ->when($filters['factory_id'], fn ($query) => $query->where('factory_id', $filters['factory_id']))
+            ->orderBy('code')
+            ->get();
+
+        return $instruments->map(function ($instrument) {
+            $test = $instrument->tests->first();
+            $dimensions = $test?->dimensionChecks->keyBy('dimension');
+
+            return [
+                'id' => $instrument->id,
+                'code' => $instrument->code,
+                'location' => $instrument->department?->name,
+                'length' => $dimensions?->get('length')?->measured_value,
+                'width' => $dimensions?->get('width')?->measured_value,
+                'diameter' => $dimensions?->get('diameter')?->measured_value,
+                'specification' => $instrument->specification?->name,
+                'test_date' => $test?->test_date?->locale('id')->translatedFormat('d F Y'),
+                'status' => $test?->status,
+                'next_test_date' => $test?->next_test_date?->locale('id')->translatedFormat('d F Y'),
+                'tester' => $test?->tester?->name,
+            ];
+        })->values();
     }
 
     private function formatCorrection(CalibrationTest $test): string
