@@ -17,6 +17,8 @@ use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Tests\TestCase;
 
 class StraightnessReportTest extends TestCase
@@ -130,6 +132,40 @@ class StraightnessReportTest extends TestCase
             ->where('tests.1.tester', 'Kalibrator'));
 
         $this->assertDatabaseHas('instruments', ['id' => $withoutTest->id]);
+    }
+
+    public function test_diameter_range_report_and_excel_preserve_literal_values_and_legacy(): void
+    {
+        InstrumentType::insert(['id' => 18, 'name' => 'Caliper']);
+        $test = $this->makeTest(InstrumentType::findOrFail(18));
+        $dimension = $test->dimensionChecks()->create([
+            'dimension' => 'diameter', 'label' => 'Diameter', 'min_value' => 79, 'max_value' => 80,
+            'measured_value_min' => '79.99', 'measured_value_max' => '80',
+            'measured_value_text' => 'older text', 'measured_value' => 3,
+            'unit' => 'mm', 'is_within_range' => null, 'sort_order' => 0,
+        ]);
+        foreach ([
+            ['79.99', '80.00', 'older text', '79.99-80.00'],
+            ['-2.00', '-1.00', null, '-2.00--1.00'],
+            [null, null, 'arbitrary legacy text', 'arbitrary legacy text'],
+            [null, null, '=1+1', '=1+1'],
+            [null, null, null, '3.00'],
+        ] as [$min, $max, $text, $expected]) {
+            $dimension->update(['measured_value_min' => $min, 'measured_value_max' => $max, 'measured_value_text' => $text]);
+            $rows = $this->rows('type_id=18');
+            $this->assertSame($expected, $rows[0]['diameter']);
+            $export = new InternalKalibrasiExport($rows, 'type_18');
+            $this->assertSame($expected, $export->array()[0][5]);
+            $sheet = new Spreadsheet;
+            $cell = $sheet->getActiveSheet()->getCell('F2');
+            $export->bindValue($cell, $export->array()[0][5]);
+            $this->assertSame(DataType::TYPE_STRING, $cell->getDataType());
+            $this->assertSame($expected, $cell->getValue());
+            $this->assertSame('0.00', $export->columnFormats()['D']);
+            $this->assertSame('0.00', $export->columnFormats()['E']);
+            $this->assertSame('OK', $test->fresh()->status);
+            $this->assertSame('2026-11-14', $test->fresh()->next_test_date->toDateString());
+        }
     }
 
     public function test_type_18_export_has_expected_columns_and_dash_for_missing_values(): void

@@ -31,7 +31,7 @@ type Instrument = {
 };
 type Point = { standard_template_id: number; standard_value: Decimal; reading_value: string; index: number };
 type Group = { id: number; name: string; reference_media: string; open: boolean; points: Point[] };
-type DimensionCheck = { dimension: string; label: string; min: Decimal; max: Decimal; measured_value: string };
+type DimensionCheck = { dimension: string; label: string; min: Decimal; max: Decimal; measured_value: string; measured_value_min: string; measured_value_max: string };
 type InstrumentOption = { id: number; code: string };
 type StraightnessKey = 'dudukan' | 'tiang_kelurusan' | 'titik_tengah';
 const straightnessFields: Array<{ key: StraightnessKey; label: string }> = [
@@ -112,7 +112,9 @@ const formatDimension = (check: DimensionCheck) => {
     const value = check.measured_value.trim();
     if (value !== '' && scaled(value) !== null) check.measured_value = Number(value).toFixed(2);
 };
-const dimensionsFilled = computed(() => dimensionChecks.value.every((check) => isTextDiameter(check) ? !!check.measured_value.trim() && check.measured_value.trim().length <= 255 : scaled(check.measured_value) !== null));
+const validEndpoint = (value: string) => /^[+-]?(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(value.trim()) && Math.abs(Number(value)) <= 99999999.99;
+const formatEndpoint = (check: DimensionCheck, field: 'measured_value_min' | 'measured_value_max') => { if (validEndpoint(check[field])) check[field] = Number(check[field]).toFixed(2); };
+const dimensionsFilled = computed(() => dimensionChecks.value.every((check) => isTextDiameter(check) ? validEndpoint(check.measured_value_min) && validEndpoint(check.measured_value_max) && Number(check.measured_value_min) <= Number(check.measured_value_max) : scaled(check.measured_value) !== null));
 const dimensionStatus = (check: DimensionCheck) => {
     if (isTextDiameter(check)) return '';
     const measured = scaled(check.measured_value);
@@ -151,7 +153,7 @@ const applyInstrument = (instrument: Instrument) => {
         { dimension: 'length', label: 'Panjang', min: specification.length_min, max: specification.length_max },
         { dimension: 'width', label: 'Lebar', min: specification.width_min, max: specification.width_max },
         { dimension: 'diameter', label: 'Diameter', min: specification.diameter_min, max: specification.diameter_max },
-    ].filter((check) => check.min !== null && check.max !== null).map((check) => ({ ...check, min: check.min!, max: check.max!, measured_value: '' })) : [];
+    ].filter((check) => check.min !== null && check.max !== null).map((check) => ({ ...check, min: check.min!, max: check.max!, measured_value: '', measured_value_min: '', measured_value_max: '' })) : [];
 };
 const selectInstrument = async (id: unknown) => {
     const option = searchResults.value.find((item) => item.id === Number(id));
@@ -209,7 +211,7 @@ const submit = () => {
         ...(!isStraightness.value && selectedGroupId.value ? { selected_group_id: selectedGroupId.value } : {}),
         ...(!isStraightness.value && !isManual.value ? {
             items: items.value.map((point) => ({ standard_template_id: point.standard_template_id, reading_value: point.reading_value.trim() })),
-            dimension_checks: dimensionChecks.value.map((check) => ({ dimension: check.dimension, ...(isType18.value && check.dimension === 'diameter' ? { measured_value_text: check.measured_value.trim() } : { measured_value: check.measured_value.trim() }) })),
+            dimension_checks: dimensionChecks.value.map((check) => ({ dimension: check.dimension, ...(isType18.value && check.dimension === 'diameter' ? { measured_value_min: check.measured_value_min.trim(), measured_value_max: check.measured_value_max.trim() } : { measured_value: check.measured_value.trim() }) })),
         } : {}),
     };
     router.post(route('tests.store'), payload, {
@@ -311,11 +313,20 @@ if (import.meta.env.DEV) {
                 <div class="group-content">
                     <h3 class="card-title">Pemeriksaan Ukuran</h3>
                     <div v-for="(check, index) in dimensionChecks" :key="check.dimension" class="item-row">
-                        <label :for="`dimension-${check.dimension}`">{{ check.label }}{{ isType18 && check.dimension === 'diameter' ? ' (catatan, tanpa evaluasi)' : ` (${check.min} s/d ${check.max} ${selected.specification?.dimension_unit})` }}</label>
-                        <input :id="`dimension-${check.dimension}`" v-model="check.measured_value" type="text" :inputmode="isTextDiameter(check) ? undefined : 'decimal'" :maxlength="isTextDiameter(check) ? 255 : undefined" :disabled="saving" @blur="formatDimension(check)" />
+                        <label :for="`dimension-${check.dimension}`">{{ check.label }} ({{ displayDimension(check.min) }} s/d {{ displayDimension(check.max) }} {{ selected.specification?.dimension_unit }})</label>
+                        <template v-if="isTextDiameter(check)">
+                            <p class="hint">Spesifikasi hanya referensi. Hasil ukur tanpa evaluasi status.</p>
+                            <label :for="`dimension-${check.dimension}-min`">Minimum</label>
+                            <input :id="`dimension-${check.dimension}-min`" v-model="check.measured_value_min" type="text" inputmode="decimal" :disabled="saving" @blur="formatEndpoint(check, 'measured_value_min')" />
+                            <p v-if="errors[`dimension_checks.${index}.measured_value_min`]" class="error-list">{{ errors[`dimension_checks.${index}.measured_value_min`] }}</p>
+                            <label :for="`dimension-${check.dimension}-max`">Maksimum</label>
+                            <input :id="`dimension-${check.dimension}-max`" v-model="check.measured_value_max" type="text" inputmode="decimal" :disabled="saving" @blur="formatEndpoint(check, 'measured_value_max')" />
+                            <p v-if="errors[`dimension_checks.${index}.measured_value_max`]" class="error-list">{{ errors[`dimension_checks.${index}.measured_value_max`] }}</p>
+                        </template>
+                        <input v-else :id="`dimension-${check.dimension}`" v-model="check.measured_value" type="text" inputmode="decimal" :disabled="saving" @blur="formatDimension(check)" />
                         <span v-if="!(isType18 && check.dimension === 'diameter') && dimensionStatus(check)" class="status-chip" :class="dimensionStatus(check) === 'OK' ? 'ok' : 'ng'">{{ dimensionStatus(check) }}</span>
                         <p v-if="!(isType18 && check.dimension === 'diameter') && check.measured_value !== '' && scaled(check.measured_value) === null" class="error-list">Isi angka maksimal 4 desimal, rentang ±99999999.9999.</p>
-                        <p v-if="errors[`dimension_checks.${index}.${isTextDiameter(check) ? 'measured_value_text' : 'measured_value'}`] || errors[`dimension_checks.${index}.measured_value`] || errors[`dimension_checks.${index}.measured_value_text`] || errors.dimension_checks" class="error-list">{{ errors[`dimension_checks.${index}.${isTextDiameter(check) ? 'measured_value_text' : 'measured_value'}`] || errors[`dimension_checks.${index}.measured_value`] || errors[`dimension_checks.${index}.measured_value_text`] || errors.dimension_checks }}</p>
+                        <p v-if="errors[`dimension_checks.${index}.measured_value`] || errors.dimension_checks" class="error-list">{{ errors[`dimension_checks.${index}.measured_value`] || errors.dimension_checks }}</p>
                     </div>
                 </div>
             </div>

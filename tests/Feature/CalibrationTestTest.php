@@ -152,7 +152,7 @@ class CalibrationTestTest extends TestCase
         $this->assertEquals(25.7, $test->dimensionChecks()->where('dimension', 'width')->first()->min_value);
     }
 
-    public function test_type_18_accepts_text_diameter_without_affecting_status_and_updates_dimensions(): void
+    public function test_type_18_accepts_numeric_diameter_range_without_affecting_status_and_updates_dimensions(): void
     {
         while (InstrumentType::count() < 17) {
             InstrumentType::create(['name' => 'Type '.(InstrumentType::count() + 1)]);
@@ -175,7 +175,7 @@ class CalibrationTestTest extends TestCase
             'dimension_checks' => [
                 ['dimension' => 'length', 'measured_value' => '12'],
                 ['dimension' => 'width', 'measured_value' => '6'],
-                ['dimension' => 'diameter', 'measured_value_text' => '79.99-80.00'],
+                ['dimension' => 'diameter', 'measured_value_min' => '79.99', 'measured_value_max' => '80.00'],
             ],
         ];
 
@@ -183,7 +183,9 @@ class CalibrationTestTest extends TestCase
         $test = CalibrationTest::firstOrFail();
         $this->assertSame('OK', $test->status);
         $this->assertSame('OK', $test->computed_status);
-        $this->assertSame('79.99-80.00', $test->dimensionChecks->firstWhere('dimension', 'diameter')->measured_value_text);
+        $this->assertSame('79.99-80.00', $test->dimensionChecks->firstWhere('dimension', 'diameter')->diameterDisplay());
+        $this->assertNull($test->dimensionChecks->firstWhere('dimension', 'diameter')->measured_value_text);
+        $this->assertNull($test->dimensionChecks->firstWhere('dimension', 'diameter')->measured_value);
         $this->assertNull($test->dimensionChecks->firstWhere('dimension', 'diameter')->is_within_range);
 
         $payload = [
@@ -193,15 +195,99 @@ class CalibrationTestTest extends TestCase
             'dimension_checks' => $test->dimensionChecks->map(fn ($check) => [
                 'id' => $check->id,
                 'measured_value' => $check->dimension === 'length' ? '13' : ($check->dimension === 'width' ? '7' : null),
-                'measured_value_text' => $check->dimension === 'diameter' ? 'arbitrary text; no scoring' : null,
+                'measured_value_min' => $check->dimension === 'diameter' ? '-2.00' : null,
+                'measured_value_max' => $check->dimension === 'diameter' ? '-1.00' : null,
             ])->all(),
         ];
         $this->put('/tests/'.$test->id, $payload)->assertSessionHasNoErrors();
         $test->refresh();
         $this->assertSame('NG', $test->status);
         $this->assertSame('OK', $test->computed_status);
-        $this->assertSame('arbitrary text; no scoring', $test->dimensionChecks->firstWhere('dimension', 'diameter')->measured_value_text);
+        $this->assertSame('-2.00--1.00', $test->dimensionChecks->firstWhere('dimension', 'diameter')->diameterDisplay());
+        $this->assertSame('2026-09-02', $test->next_test_date->toDateString());
+        $this->assertNull($test->dimensionChecks->firstWhere('dimension', 'diameter')->is_within_range);
         $this->assertSame('13.00', number_format((float) $test->dimensionChecks->firstWhere('dimension', 'length')->measured_value, 2, '.', ''));
+    }
+
+    private function diameterPayload(): array
+    {
+        $instrument = $this->makeInstrument();
+        InstrumentType::insert(['id' => 18, 'name' => 'Caliper']);
+        $specification = Specification::create(['name' => 'Diameter', 'diameter_min' => 79, 'diameter_max' => 80, 'dimension_unit' => 'mm']);
+        $instrument->update(['instrument_type_id' => 18, 'specification_id' => $specification->id]);
+        $this->actingAs($this->inspector());
+
+        return [
+            'instrument_id' => $instrument->id, 'test_date' => '2026-08-01',
+            'items' => StandardTemplate::all()->map(fn ($point) => ['standard_template_id' => $point->id, 'reading_value' => $point->standard_value])->all(),
+            'dimension_checks' => [['dimension' => 'diameter', 'measured_value_min' => '79.99', 'measured_value_max' => '80.00']],
+        ];
+    }
+
+    public function test_invalid_diameter_ranges_reject_create_and_update_atomically(): void
+    {
+        $payload = $this->diameterPayload();
+        $invalid = [
+            [['measured_value_min' => '81', 'measured_value_max' => '80'], 'measured_value_max'],
+            [['measured_value_max' => '80'], 'measured_value_min'],
+            [['measured_value_min' => '79'], 'measured_value_max'],
+            [['measured_value_min' => 'abc', 'measured_value_max' => '80'], 'measured_value_min'],
+            [['measured_value_min' => '79', 'measured_value_max' => 'NaN'], 'measured_value_max'],
+            [['measured_value_min' => '79.999', 'measured_value_max' => '80'], 'measured_value_min'],
+            [['measured_value_min' => '79', 'measured_value_max' => '80.001'], 'measured_value_max'],
+            [['measured_value_min' => '-100000000', 'measured_value_max' => '80'], 'measured_value_min'],
+            [['measured_value_min' => '79', 'measured_value_max' => '100000000'], 'measured_value_max'],
+            [['measured_value_text' => '79.99-80.00'], 'measured_value_min'],
+            [['measured_value' => '80'], 'measured_value_min'],
+        ];
+        foreach ($invalid as [$values, $field]) {
+            $attempt = $payload;
+            $attempt['dimension_checks'] = [['dimension' => 'diameter', ...$values]];
+            $this->post('/tests', $attempt)->assertSessionHasErrors('dimension_checks.0.'.$field);
+            $this->assertDatabaseCount('calibration_tests', 0);
+            $this->assertDatabaseCount('calibration_test_dimension_checks', 0);
+        }
+        $this->post('/tests', $payload)->assertSessionHasNoErrors();
+        $test = CalibrationTest::firstOrFail();
+        $dimension = $test->dimensionChecks->first();
+        $dimension->update(['measured_value_min' => null, 'measured_value_max' => null, 'measured_value_text' => 'arbitrary legacy text']);
+        $test->instrument->specification->update(['diameter_min' => 1, 'diameter_max' => 2]);
+        foreach ($invalid as [$values, $field]) {
+            $attempt = [
+                'test_date' => '2026-08-02', 'status' => 'NG',
+                'items' => $test->items->map(fn ($item) => ['id' => $item->id, 'reading_value' => $item->standard_value + 3])->all(),
+                'dimension_checks' => [['id' => $dimension->id, 'dimension' => 'length', ...$values]],
+            ];
+            $this->put('/tests/'.$test->id, $attempt)->assertSessionHasErrors('dimension_checks.0.'.$field);
+            $this->assertSame('OK', $test->fresh()->status);
+            $this->assertEquals(0, $test->items()->first()->correction);
+            $this->assertSame('arbitrary legacy text', $dimension->fresh()->diameterDisplay());
+        }
+        $this->get('/tests/'.$test->id.'/edit')->assertInertia(fn (AssertableInertia $page) => $page->component('Tests/Edit')->where('test.dimension_checks.0.measured_value_text', 'arbitrary legacy text')->where('test.dimension_checks.0.min_value', 79));
+        $this->get('/tests/'.$test->id)->assertInertia(fn (AssertableInertia $page) => $page->component('Tests/Show')->where('test.dimension_checks.0.measured_value_text', 'arbitrary legacy text'));
+        $attempt['dimension_checks'] = [['id' => $dimension->id + 100, 'measured_value_min' => 1, 'measured_value_max' => 2]];
+        $this->put('/tests/'.$test->id, $attempt)->assertSessionHasErrors('dimension_checks');
+        $this->assertEquals(0, $test->items()->first()->correction);
+        $attempt['dimension_checks'] = [['id' => $dimension->id, 'measured_value_min' => '-99999999.99', 'measured_value_max' => '99999999.99']];
+        $this->put('/tests/'.$test->id, $attempt)->assertSessionHasNoErrors();
+        $this->assertSame('-99999999.99-99999999.99', $dimension->fresh()->diameterDisplay());
+        $this->assertEquals(79, $dimension->fresh()->min_value);
+        $this->assertEquals(80, $dimension->fresh()->max_value);
+    }
+
+    public function test_numeric_range_migration_preserves_legacy_rows(): void
+    {
+        $payload = $this->diameterPayload();
+        $this->post('/tests', $payload)->assertSessionHasNoErrors();
+        $dimension = CalibrationTest::firstOrFail()->dimensionChecks->first();
+        $dimension->update(['measured_value_min' => null, 'measured_value_max' => null, 'measured_value_text' => 'old arbitrary text']);
+        $migration = require database_path('migrations/2026_11_25_000001_add_numeric_diameter_range_to_dimension_checks.php');
+        $migration->down();
+        $migration->up();
+        $this->assertSame('old arbitrary text', $dimension->fresh()->diameterDisplay());
+        $this->assertNull($dimension->fresh()->measured_value_min);
+        $dimension->update(['measured_value_text' => null, 'measured_value' => 80]);
+        $this->assertSame('80.00', $dimension->fresh()->diameterDisplay());
     }
 
     public function test_text_diameter_is_rejected_for_other_instrument_types(): void

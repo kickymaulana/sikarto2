@@ -180,7 +180,7 @@ class ReportController extends Controller
                 'location' => $instrument->department?->name,
                 'length' => $dimensions?->get('length')?->measured_value === null ? null : number_format((float) $dimensions->get('length')->measured_value, 2, '.', ''),
                 'width' => $dimensions?->get('width')?->measured_value === null ? null : number_format((float) $dimensions->get('width')->measured_value, 2, '.', ''),
-                'diameter' => $dimensions?->get('diameter')?->measured_value_text ?? ($dimensions?->get('diameter')?->measured_value === null ? null : number_format((float) $dimensions->get('diameter')->measured_value, 2, '.', '')),
+                'diameter' => $dimensions?->get('diameter')?->diameterDisplay(),
                 'specification' => $instrument->specification?->name,
                 'test_date' => $test?->test_date?->locale('id')->translatedFormat('d F Y'),
                 'status' => $test?->status,

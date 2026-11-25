@@ -9,7 +9,7 @@ const page=usePage(); const can=(permission:string)=>!!page.props.auth?.user?.pe
 const isStraightness = computed(() => props.test.straightness_checks != null || props.test.instrument?.type?.name?.trim().toUpperCase() === 'STRAIGHTNESS');
 const isType18 = computed(() => props.test.instrument?.instrument_type_id === 18);
 const isTextDiameter = (check: any) => isType18.value && check.dimension === 'diameter';
-const effectiveDimensionValue = (check: any) => check.measured_value_text ?? (isType18.value && ['length', 'width', 'diameter'].includes(check.dimension) && check.measured_value != null ? Number(check.measured_value).toFixed(2) : check.measured_value);
+const effectiveDimensionValue = (check: any) => check.dimension === 'diameter' && check.measured_value_min != null && check.measured_value_max != null ? `${Number(check.measured_value_min).toFixed(2)}-${Number(check.measured_value_max).toFixed(2)}` : check.measured_value_text ?? (isType18.value && ['length', 'width', 'diameter'].includes(check.dimension) && check.measured_value != null ? Number(check.measured_value).toFixed(2) : check.measured_value);
 const straightnessFields = [
     { key: 'dudukan', label: 'Dudukan' },
     { key: 'tiang_kelurusan', label: 'Tiang / Kelurusan' },

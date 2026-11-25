@@ -74,7 +74,7 @@ class InternalKalibrasiExport extends DefaultValueBinder implements FromArray, S
                 $row['location'] ?? '—',
                 ($row['length'] ?? null) === null ? '—' : $row['length'],
                 ($row['width'] ?? null) === null ? '—' : $row['width'],
-                ($row['diameter'] ?? null) === null ? '—' : (is_string($row['diameter']) && preg_match('/^[=+@\\-]/', $row['diameter']) ? "'".$row['diameter'] : $row['diameter']),
+                ($row['diameter'] ?? null) === null ? '—' : (string) $row['diameter'],
                 $row['specification'] ?? '—',
                 $row['test_date'] ?? '—',
                 'PERBULAN',
